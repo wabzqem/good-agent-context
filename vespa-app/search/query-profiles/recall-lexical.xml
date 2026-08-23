@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<query-profile id="recall-lexical" type="root">
+    <field name="hits" overridable="false">8</field>
+    <field name="timeout" overridable="false">1.0</field>
+    <field name="model.restrict" overridable="false">memory</field>
+    <field name="ranking.profile" overridable="false">memory_bm25</field>
+    <field name="presentation.summary" overridable="false">memory_summary</field>
+    <field name="type" overridable="false">weakAnd</field>
+    <field name="yql" overridable="false"><![CDATA[
+        select * from memory where
+        namespace_id contains @namespace_id and
+        scope_id contains @scope_id and
+        (status contains "active" or status contains "superseded") and userQuery()
+    ]]></field>
+</query-profile>

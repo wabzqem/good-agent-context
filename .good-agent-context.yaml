@@ -1,0 +1,9 @@
+version: 1
+repository: repository:good-agent-context
+default_scope: capability:good-agent-context
+
+documents:
+  - kind: specification
+    root: docs
+    include: ["**/*.md"]
+    scope: capability:good-agent-context

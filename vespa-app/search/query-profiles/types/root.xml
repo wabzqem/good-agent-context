@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<query-profile-type id="root" inherits="native">
+    <field name="namespace_id" type="string" />
+    <field name="scope_id" type="string" />
+    <field name="ranking.features.query(query_embedding)" type="tensor&lt;float&gt;(x[384])" />
+</query-profile-type>

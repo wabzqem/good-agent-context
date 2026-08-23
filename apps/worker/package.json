@@ -1,0 +1,14 @@
+{
+  "name": "@good-agent-context/worker",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --env local",
+    "deploy": "wrangler deploy"
+  },
+  "dependencies": {
+    "@good-agent-context/contracts": "file:../../packages/contracts",
+    "jose": "^6.2.10"
+  }
+}

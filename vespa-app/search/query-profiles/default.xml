@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<query-profile id="default" type="root">
+    <field name="timeout" overridable="false">1.0</field>
+</query-profile>

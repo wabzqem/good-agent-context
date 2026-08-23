@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<query-profile id="recall" type="root">
+    <field name="hits" overridable="false">8</field>
+    <field name="maxHits" overridable="false">100</field>
+    <field name="timeout" overridable="false">1.0</field>
+    <field name="model.restrict" overridable="false">memory</field>
+    <field name="ranking.profile" overridable="false">memory_hybrid</field>
+    <field name="presentation.summary" overridable="false">memory_summary</field>
+    <field name="type" overridable="false">weakAnd</field>
+    <field name="yql" overridable="false"><![CDATA[
+        select * from memory where
+        namespace_id contains @namespace_id and
+        scope_id contains @scope_id and
+        (status contains "active" or status contains "superseded") and
+        (({targetHits:100}nearestNeighbor(embedding, query_embedding)) or userQuery())
+    ]]></field>
+</query-profile>

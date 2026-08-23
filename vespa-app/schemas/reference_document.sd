@@ -1,0 +1,159 @@
+schema reference_document {
+    document reference_document {
+        field document_id type string {
+            indexing: summary | attribute
+            attribute: fast-search
+        }
+        field namespace_id type string {
+            indexing: summary | attribute
+            attribute: fast-search
+            rank: filter
+        }
+        field scope_id type string {
+            indexing: summary | attribute
+            attribute: fast-search
+            rank: filter
+        }
+        field kind type string {
+            indexing: summary | attribute
+            attribute: fast-search
+            rank: filter
+        }
+        field title type string {
+            indexing: summary | index
+            index: enable-bm25
+        }
+        field chunks type array<string> {
+            indexing: summary | index
+            index: enable-bm25
+            summary {
+                select-elements-by: best_chunks
+            }
+        }
+        field chunk_headings type array<string> {
+            indexing: summary | index
+            index: enable-bm25
+        }
+        field repository_id type string {
+            indexing: summary | attribute
+            attribute: fast-search
+        }
+        field source_path type string {
+            indexing: summary | index
+            index: enable-bm25
+        }
+        field source_uri type string {
+            indexing: summary
+        }
+        field source_revision type string {
+            indexing: summary | attribute
+        }
+        field source_content_hash type string {
+            indexing: summary | attribute
+        }
+        field indexed_at type long {
+            indexing: summary | attribute
+        }
+        field lifecycle_status type string {
+            indexing: summary | attribute
+            attribute: fast-search
+            rank: filter
+        }
+        field source_status type string {
+            indexing: summary | attribute
+        }
+        field superseded_by_document_id type string {
+            indexing: summary | attribute
+        }
+        field guidance_notes type array<string> {
+            indexing: summary | index
+            index: enable-bm25
+        }
+        field metadata_revision type int {
+            indexing: summary | attribute
+        }
+    }
+
+    field chunk_embeddings type tensor<bfloat16>(chunk{}, x[384]) {
+        indexing: input chunks | embed e5 | attribute | index
+        attribute {
+            distance-metric: angular
+        }
+        index {
+            hnsw {
+                max-links-per-node: 16
+                neighbors-to-explore-at-insert: 100
+            }
+        }
+    }
+
+    fieldset default {
+        fields: title, chunks, chunk_headings, source_path, guidance_notes
+    }
+
+    document-summary reference_summary {
+        from-disk
+        summary document_id { source: document_id }
+        summary scope_id { source: scope_id }
+        summary kind { source: kind }
+        summary title { source: title }
+        summary chunks { source: chunks }
+        summary chunk_headings { source: chunk_headings }
+        summary repository_id { source: repository_id }
+        summary source_path { source: source_path }
+        summary source_uri { source: source_uri }
+        summary source_revision { source: source_revision }
+        summary source_content_hash { source: source_content_hash }
+        summary indexed_at { source: indexed_at }
+        summary lifecycle_status { source: lifecycle_status }
+        summary source_status { source: source_status }
+        summary superseded_by_document_id { source: superseded_by_document_id }
+        summary guidance_notes { source: guidance_notes }
+    }
+
+    rank-profile reference_hybrid {
+        inputs {
+            query(query_embedding) tensor<float>(x[384])
+        }
+        rank chunks {
+            element-gap: 1
+        }
+        function lexical() {
+            expression: 3.0 * bm25(title) + 1.5 * bm25(chunk_headings) + bm25(chunks) + 0.2 * bm25(guidance_notes)
+        }
+        function semantic() {
+            expression: closeness(field, chunk_embeddings)
+        }
+        function chunk_vector_distance() {
+            expression: euclidean_distance(query(query_embedding), attribute(chunk_embeddings), x)
+        }
+        function chunk_vector_scores() {
+            expression: 1 / (1 + chunk_vector_distance())
+        }
+        function chunk_text_scores() {
+            expression: elementwise(bm25(chunks), chunk, float)
+        }
+        function chunk_scores() {
+            expression: merge(chunk_vector_scores(), chunk_text_scores(), f(a,b)(a + b))
+        }
+        function best_chunks() {
+            expression: top(3, chunk_scores())
+        }
+        first-phase {
+            expression: 0.05 * lexical() + semantic()
+        }
+        global-phase {
+            expression: reciprocal_rank_fusion(lexical, semantic)
+            rerank-count: 100
+        }
+        match-features {
+            lexical
+            semantic
+        }
+        summary-features {
+            best_chunks
+            lexical
+            semantic
+        }
+    }
+}

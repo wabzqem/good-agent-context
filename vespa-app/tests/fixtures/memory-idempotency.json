@@ -1,0 +1,24 @@
+{
+  "fields": {
+    "memory_id": "mem-payment-idempotency",
+    "revision": 1,
+    "namespace_id": "acme",
+    "scope_id": "capability:payments",
+    "scope_kind": "capability",
+    "kind": "implementation",
+    "title": "Payment retries retain their original idempotency key",
+    "body": "The payments capability sends the same idempotency key for every retry of one logical charge. Generate it before the first provider attempt and persist it with the charge, rather than deriving a fresh value in retry code.",
+    "tags": ["payments", "retries", "idempotency"],
+    "repository_id": "platform/payments",
+    "source_paths": ["services/payments/src/charge.ts"],
+    "source_commit": "example-commit",
+    "created_at": 1770000000,
+    "updated_at": 1770000000,
+    "status": "active",
+    "supersedes_ids": [],
+    "derived_from_memory_ids": [],
+    "useful_count": 3,
+    "last_useful_at": 1770000000,
+    "content_hash": "sha256:memory-payment-idempotency"
+  }
+}

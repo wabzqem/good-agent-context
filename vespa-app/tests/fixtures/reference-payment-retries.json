@@ -1,0 +1,25 @@
+{
+  "fields": {
+    "document_id": "doc-payment-retries-v3",
+    "namespace_id": "acme",
+    "scope_id": "capability:payments",
+    "kind": "specification",
+    "title": "Payment retry and idempotency specification",
+    "chunks": [
+      "## Idempotency\nA charge receives one idempotency key before its first provider request. Every retry of that logical charge sends exactly that same key.",
+      "## Retry budget\nRetry only transient provider failures. Stop after three attempts and record the provider response for reconciliation.",
+      "## Source of truth\nThis indexed copy is informational. Update the tracked specification file, then let the document indexer refresh this record."
+    ],
+    "chunk_headings": ["Idempotency", "Retry budget", "Source of truth"],
+    "repository_id": "platform/payments",
+    "source_path": "specs/payments/retries.md",
+    "source_uri": "https://github.com/acme/platform/blob/main/specs/payments/retries.md",
+    "source_revision": "example-commit",
+    "source_content_hash": "sha256:payment-retries-v3",
+    "indexed_at": 1770000000,
+    "lifecycle_status": "active",
+    "source_status": "present",
+    "guidance_notes": ["This is an indexed reference copy; the repository path is the source of truth."],
+    "metadata_revision": 3
+  }
+}

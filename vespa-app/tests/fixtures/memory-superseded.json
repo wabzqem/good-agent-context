@@ -1,0 +1,25 @@
+{
+  "fields": {
+    "memory_id": "mem-retired-direct-vespa",
+    "revision": 2,
+    "namespace_id": "acme",
+    "scope_id": "capability:payments",
+    "scope_kind": "capability",
+    "kind": "architecture",
+    "title": "Retired agent authentication integration",
+    "body": "This obsolete note described coding agents calling Vespa directly instead of using the authenticated gateway.",
+    "tags": ["obsolete"],
+    "repository_id": "platform/agent-memory",
+    "source_paths": ["docs/archive.md"],
+    "source_commit": "old-commit",
+    "created_at": 1600000000,
+    "updated_at": 1770000000,
+    "status": "superseded",
+    "supersedes_ids": [],
+    "superseded_by": "mem-auth-boundary",
+    "derived_from_memory_ids": [],
+    "useful_count": 0,
+    "last_useful_at": 0,
+    "content_hash": "sha256:retired"
+  }
+}

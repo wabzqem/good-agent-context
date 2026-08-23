@@ -1,0 +1,205 @@
+schema memory {
+    document memory {
+        field memory_id type string {
+            indexing: summary | attribute
+            attribute: fast-search
+        }
+        field revision type int {
+            indexing: summary | attribute
+        }
+        field namespace_id type string {
+            indexing: summary | attribute
+            attribute: fast-search
+            rank: filter
+        }
+        field scope_id type string {
+            indexing: summary | attribute
+            attribute: fast-search
+            rank: filter
+        }
+        field scope_kind type string {
+            indexing: summary | attribute
+        }
+        field kind type string {
+            indexing: summary | attribute
+            attribute: fast-search
+        }
+        field title type string {
+            indexing: summary | index
+            index: enable-bm25
+        }
+        field body type string {
+            indexing: summary | index
+            index: enable-bm25
+        }
+        field tags type array<string> {
+            indexing: summary | attribute
+        }
+        field repository_id type string {
+            indexing: summary | attribute
+            attribute: fast-search
+        }
+        field source_paths type array<string> {
+            indexing: summary
+        }
+        field source_commit type string {
+            indexing: summary | attribute
+        }
+        field created_at type long {
+            indexing: summary | attribute
+        }
+        field updated_at type long {
+            indexing: summary | attribute
+        }
+        field status type string {
+            indexing: summary | attribute
+            attribute: fast-search
+            rank: filter
+        }
+        field supersedes_ids type array<string> {
+            indexing: summary
+        }
+        field superseded_by type string {
+            indexing: summary
+        }
+        field derived_from_memory_ids type array<string> {
+            indexing: summary
+        }
+        field useful_count type int {
+            indexing: summary | attribute
+        }
+        field last_useful_at type long {
+            indexing: summary | attribute
+        }
+        field content_hash type string {
+            indexing: summary | attribute
+            attribute: fast-search
+        }
+    }
+
+    field embedding type tensor<bfloat16>(x[384]) {
+        indexing: input body | embed e5 | attribute | index
+        attribute {
+            distance-metric: angular
+        }
+        index {
+            hnsw {
+                max-links-per-node: 16
+                neighbors-to-explore-at-insert: 100
+            }
+        }
+    }
+
+    fieldset default {
+        fields: title, body
+    }
+
+    document-summary memory_summary {
+        from-disk
+        summary memory_id { source: memory_id }
+        summary revision { source: revision }
+        summary scope_id { source: scope_id }
+        summary scope_kind { source: scope_kind }
+        summary kind { source: kind }
+        summary title { source: title }
+        summary body { source: body }
+        summary tags { source: tags }
+        summary repository_id { source: repository_id }
+        summary source_paths { source: source_paths }
+        summary source_commit { source: source_commit }
+        summary created_at { source: created_at }
+        summary updated_at { source: updated_at }
+        summary status { source: status }
+        summary superseded_by { source: superseded_by }
+        summary useful_count { source: useful_count }
+        summary last_useful_at { source: last_useful_at }
+    }
+
+    rank-profile memory_hybrid {
+        inputs {
+            query(query_embedding) tensor<float>(x[384])
+        }
+        function lexical() {
+            expression: 2.0 * bm25(title) + bm25(body)
+        }
+        function semantic() {
+            expression: closeness(field, embedding)
+        }
+        function freshness() {
+            expression: exp(-0.69314718056 * age(created_at) / (180 * 24 * 60 * 60))
+        }
+        function utility() {
+            expression: min(log(1 + attribute(useful_count)) / log(21), 1.0)
+        }
+        function lifecycle_weight() {
+            expression: if (attribute(status) == "superseded", 0.03, 1.0)
+        }
+        first-phase {
+            expression: 0.05 * lexical() + semantic()
+        }
+        global-phase {
+            expression: reciprocal_rank_fusion(lexical, semantic) * (0.60 + 0.25 * freshness + 0.15 * utility) * lifecycle_weight
+            rerank-count: 100
+        }
+        match-features {
+            lexical
+            semantic
+            freshness
+            utility
+            lifecycle_weight
+        }
+        summary-features {
+            lexical
+            semantic
+            freshness
+            utility
+            lifecycle_weight
+        }
+    }
+
+    rank-profile memory_bm25 {
+        inputs {
+            query(query_embedding) tensor<float>(x[384])
+        }
+        function lexical() {
+            expression: 2.0 * bm25(title) + bm25(body)
+        }
+        function lifecycle_weight() {
+            expression: if (attribute(status) == "superseded", 0.03, 1.0)
+        }
+        first-phase {
+            expression: lexical() * lifecycle_weight()
+        }
+        match-features {
+            lexical
+            lifecycle_weight
+        }
+        summary-features {
+            lexical
+            lifecycle_weight
+        }
+    }
+
+    rank-profile memory_semantic {
+        inputs {
+            query(query_embedding) tensor<float>(x[384])
+        }
+        function semantic() {
+            expression: closeness(field, embedding)
+        }
+        function lifecycle_weight() {
+            expression: if (attribute(status) == "superseded", 0.03, 1.0)
+        }
+        first-phase {
+            expression: semantic() * lifecycle_weight()
+        }
+        match-features {
+            semantic
+            lifecycle_weight
+        }
+        summary-features {
+            semantic
+            lifecycle_weight
+        }
+    }
+}

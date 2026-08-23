@@ -1,0 +1,24 @@
+{
+  "fields": {
+    "memory_id": "mem-other-tenant",
+    "revision": 1,
+    "namespace_id": "other-org",
+    "scope_id": "capability:payments",
+    "scope_kind": "capability",
+    "kind": "architecture",
+    "title": "Other organisation payment secret",
+    "body": "This fixture must never be returned when querying the acme namespace.",
+    "tags": ["isolation"],
+    "repository_id": "other/payments",
+    "source_paths": ["private.md"],
+    "source_commit": "other-commit",
+    "created_at": 1770000000,
+    "updated_at": 1770000000,
+    "status": "active",
+    "supersedes_ids": [],
+    "derived_from_memory_ids": [],
+    "useful_count": 0,
+    "last_useful_at": 0,
+    "content_hash": "sha256:other"
+  }
+}

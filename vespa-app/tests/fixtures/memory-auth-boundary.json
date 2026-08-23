@@ -1,0 +1,24 @@
+{
+  "fields": {
+    "memory_id": "mem-auth-boundary",
+    "revision": 1,
+    "namespace_id": "acme",
+    "scope_id": "capability:payments",
+    "scope_kind": "capability",
+    "kind": "architecture",
+    "title": "Agent clients use the gateway, never Vespa directly",
+    "body": "CLI and MCP clients call the authenticated gateway. The gateway owns tenant isolation and converts the narrow recall and remember contract into Vespa queries; neither client constructs YQL or receives Vespa credentials.",
+    "tags": ["authentication", "gateway", "vespa"],
+    "repository_id": "platform/agent-memory",
+    "source_paths": ["docs/technical-spec.md"],
+    "source_commit": "example-commit",
+    "created_at": 1770000000,
+    "updated_at": 1770000000,
+    "status": "active",
+    "supersedes_ids": [],
+    "derived_from_memory_ids": [],
+    "useful_count": 7,
+    "last_useful_at": 1770000000,
+    "content_hash": "sha256:memory-auth-boundary"
+  }
+}

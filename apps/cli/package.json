@@ -1,0 +1,19 @@
+{
+  "name": "@good-agent-context/cli",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "bin": {
+    "good-context": "./bin/good-context"
+  },
+  "scripts": {
+    "dev": "tsx src/index.ts"
+  },
+  "dependencies": {
+    "@good-agent-context/client": "file:../../packages/client",
+    "@good-agent-context/contracts": "file:../../packages/contracts",
+    "fast-glob": "^3.3.3",
+    "tsx": "^4.0.0",
+    "yaml": "^2.9.0"
+  }
+}

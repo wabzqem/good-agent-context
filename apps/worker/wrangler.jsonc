@@ -1,0 +1,37 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "good-agent-context-api",
+  "account_id": "095494023a316c4f599a2c95f2a46495",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-23",
+  "routes": [
+    {
+      "pattern": "gac.wabz.net",
+      "custom_domain": true
+    }
+  ],
+  "vars": {
+    "LOCAL_DEVELOPMENT": "false",
+    "ACCESS_TEAM_DOMAIN": "https://odd-base-ee59.cloudflareaccess.com",
+    "ACCESS_AUD": "f4574beb9d8b3021c52de9a58a255e40b173444d859057ae21f0b93753d531e1",
+    "NAMESPACE_ID": "acme",
+    "VESPA_ENDPOINT": "https://dfa08232.e2d984fb.z.vespa-app.cloud/",
+    "REFERENCE_SOURCES_JSON": "[{\"repository_id\":\"repository:good-agent-context\",\"scope_id\":\"capability:good-agent-context\",\"path_prefix\":\"docs\"}]"
+  },
+  "mtls_certificates": [
+    {
+      "binding": "VESPA_MTLS",
+      "certificate_id": "2a1956be-8e8e-4ec0-8f21-940ca732f555"
+    }
+  ],
+  "env": {
+    "local": {
+      "vars": {
+        "LOCAL_DEVELOPMENT": "true",
+        "NAMESPACE_ID": "acme",
+        "VESPA_ENDPOINT": "http://127.0.0.1:8080",
+        "REFERENCE_SOURCES_JSON": "[{\"repository_id\":\"repository:good-agent-context\",\"scope_id\":\"capability:good-agent-context\",\"path_prefix\":\"docs\"}]"
+      }
+    }
+  }
+}

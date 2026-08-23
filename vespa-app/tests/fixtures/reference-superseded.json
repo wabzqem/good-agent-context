@@ -1,0 +1,22 @@
+{
+  "fields": {
+    "document_id": "doc-payment-retries-v2",
+    "namespace_id": "acme",
+    "scope_id": "capability:payments",
+    "kind": "specification",
+    "title": "Superseded payment retry specification",
+    "chunks": ["This obsolete specification allowed a new idempotency key for every retry."],
+    "chunk_headings": ["Obsolete"],
+    "repository_id": "platform/payments",
+    "source_path": "specs/payments/retries-v2.md",
+    "source_uri": "https://github.com/acme/platform/blob/main/specs/payments/retries-v2.md",
+    "source_revision": "old-commit",
+    "source_content_hash": "sha256:payment-retries-v2",
+    "indexed_at": 1700000000,
+    "lifecycle_status": "superseded",
+    "source_status": "removed",
+    "superseded_by_document_id": "doc-payment-retries-v3",
+    "guidance_notes": ["Use the current payment retry specification instead."],
+    "metadata_revision": 2
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "name": "good-agent-context",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "npm@11.12.1",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run typecheck",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "dev:worker": "npm run dev --workspace=@good-agent-context/worker",
+    "dev:mcp": "npm run dev --workspace=@good-agent-context/mcp-server",
+    "dev:cli": "npm run dev --workspace=@good-agent-context/cli --"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "tsx": "^4.23.12",
+    "typescript": "^5.9.0",
+    "vitest": "^4.0.0",
+    "wrangler": "^4.0.0"
+  }
+}

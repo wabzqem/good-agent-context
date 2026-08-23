@@ -1,0 +1,62 @@
+schema scope {
+    document scope {
+        field scope_id type string {
+            indexing: summary | attribute
+            attribute: fast-search
+        }
+        field namespace_id type string {
+            indexing: summary | attribute
+            attribute: fast-search
+        }
+        field kind type string {
+            indexing: summary | attribute
+            attribute: fast-search
+        }
+        field display_name type string {
+            indexing: summary | index
+            index: enable-bm25
+        }
+        field parent_ids type array<string> {
+            indexing: summary | attribute
+        }
+        field ancestor_ids type array<string> {
+            indexing: summary | attribute
+        }
+        field aliases type array<string> {
+            indexing: summary | index
+            index: enable-bm25
+        }
+        field repository_ids type array<string> {
+            indexing: summary | attribute
+        }
+        field description type string {
+            indexing: summary | index
+            index: enable-bm25
+        }
+        field created_at type long {
+            indexing: summary | attribute
+        }
+        field updated_at type long {
+            indexing: summary | attribute
+        }
+        field status type string {
+            indexing: summary | attribute
+            attribute: fast-search
+        }
+    }
+
+    document-summary scope_summary {
+        summary scope_id {}
+        summary namespace_id {}
+        summary kind {}
+        summary display_name {}
+        summary parent_ids {}
+        summary ancestor_ids {}
+        summary aliases {}
+        summary repository_ids {}
+        summary description {}
+        summary created_at {}
+        summary updated_at {}
+        summary status {}
+    }
+}

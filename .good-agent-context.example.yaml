@@ -1,0 +1,13 @@
+version: 1
+repository: repository:platform-monorepo
+default_scope: capability:payments
+
+bindings:
+  - root: services/ledger
+    scope: service:ledger
+
+documents:
+  - kind: specification
+    root: specs
+    include: ["**/*.md"]
+    scope: capability:payments
