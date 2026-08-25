@@ -13,6 +13,8 @@ Agents interact with the system through two primary operations:
 
 Supporting operations mark memories as useful, supersede obsolete memories, and inspect history.
 
+Supersession replaces an obsolete durable fact with an already-created active successor. The old memory is retained as clearly labelled historical context, linked by `superseded_by`, and heavily down-ranked; it is not an edit-history record or a deletion.
+
 The system also indexes repository-owned reference documents such as specifications. These are searchable copies, not memories and not the source of truth. Every result points back to the repository path and revision from which it was indexed.
 
 ## Product principles
@@ -150,9 +152,9 @@ Acceptance criteria:
 Deliverables:
 
 - Make writes idempotent.
-- Keep the current memory as an authoritative Vespa document protected by optimistic concurrency.
+- Keep the current memory as an authoritative Vespa document with an application-level revision check.
 - Record usefulness as an aggregate counter and latest-use timestamp on the current memory document.
-- Implement supersession with deterministic IDs, conditional writes, and repairable Cloudflare Workflow orchestration.
+- Implement single-memory supersession with an active successor, a supersession pointer, and historical retrieval treatment.
 - Reject likely personal, secret, session-specific, temporary, and incomplete content.
 - Add duplicate detection within the requested logical scope.
 
@@ -160,7 +162,7 @@ Acceptance criteria:
 
 - Retrying a request does not create duplicate memories.
 - Superseded memories are clearly labelled and rank substantially below comparable active memories; withdrawn memories never appear in normal recall.
-- Retrying or repairing a partially completed lifecycle operation converges to the same Vespa state.
+- A retry of an already-completed identical supersession returns its existing state; rare competing supersessions are accepted as last-writer-wins in this release.
 - Memory documents contain no authentication principal or session identifier.
 
 ### Phase 5: Relevance evaluation
@@ -222,6 +224,7 @@ Acceptance criteria:
 - Public anonymous recall.
 - Fine-grained policy beyond the initial role and scope grants.
 - Reference-document kinds beyond specifications, such as ADRs and runbooks.
+- Strict test-and-set supersession and workflow orchestration for competing or multi-memory lifecycle changes; the initial release accepts rare competing single-memory supersessions as last-writer-wins.
 
 The schema should reserve provenance relationships such as `derived_from_memory_ids`, but the synthesis process is explicitly outside the first implementation.
 

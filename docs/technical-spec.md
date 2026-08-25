@@ -151,7 +151,7 @@ Vespa stores authoritative product records and performs:
 - Multi-phase hybrid ranking.
 - For memories, freshness decay and usefulness boosting.
 - Result summaries and diagnostic match features.
-- Exact current-memory reads, partial usefulness updates, and conditional lifecycle writes.
+- Exact current-memory reads, partial usefulness updates, and single-document lifecycle writes.
 - Scope graph documents.
 - Rebuildable repository reference documents with section-level lexical and semantic retrieval.
 
@@ -380,7 +380,7 @@ Usefulness is an aggregate event signal, not a per-principal vote. The Worker ve
 POST /v1/memories/{memory_id}/supersede
 ```
 
-The request contains the expected current revision and the ID of an already-created active successor memory. The Worker conditionally marks the current memory `superseded`, sets `superseded_by` to that successor, and increments its revision. The previous content remains on that now-superseded memory as clearly labelled historical context; no separate revision archive is stored. Retrying converges safely; a competing edit returns `409 Conflict`. Supersession of several independent memories by a synthesized memory is deferred and will use a repairable Workflow rather than pretending Vespa offers cross-document transactions.
+The request contains the expected current revision and the ID of an already-created active successor memory. After checking that revision and successor, the Worker updates the current memory to `superseded`, sets `superseded_by`, and increments its revision. The previous content remains as clearly labelled historical context; no separate revision archive is stored. A retry after the intended update returns the existing state. This release deliberately accepts the rare race in which independent callers supersede the same memory concurrently: both may receive success and the later update determines `superseded_by`. Strict Vespa test-and-set and multi-memory workflow orchestration are deferred.
 
 ### 8.5 Inspect
 
@@ -535,7 +535,7 @@ The serving document contains:
 | Field | Vespa shape | Purpose |
 | --- | --- | --- |
 | `memory_id` | string attribute + summary | Stable external ID. |
-| `revision` | int attribute + summary | Current version used for conditional writes. |
+| `revision` | int attribute + summary | Current state version used for application-level conflict checks and diagnostics. |
 | `namespace_id` | string fast-search attribute | Mandatory tenancy filter. |
 | `scope_id` | string fast-search attribute | Logical scope filter. |
 | `scope_kind` | string attribute + summary | Diagnostics and optional filtering. |
@@ -668,7 +668,7 @@ Reference results contain only their selected excerpts, source-of-truth location
 
 ## 11. Read and write workflows
 
-Vespa provides per-document conditional writes, not multi-document transactions. The workflows below use deterministic IDs, immutable-before-current ordering, and version conditions so retries are safe and incomplete work is detectable. See the [Vespa conditional-write guide](https://docs.vespa.ai/en/writing/document-v1-api-guide.html#conditional-writes).
+Vespa provides per-document conditional writes, not multi-document transactions. This release uses deterministic IDs and immutable-before-current ordering. It intentionally does not use a test-and-set condition for single-memory supersession, accepting a rare last-writer-wins race; strict conditions remain available if the observed workload requires them. See the [Vespa conditional-write guide](https://docs.vespa.ai/en/writing/document-v1-api-guide.html#conditional-writes).
 
 ### 11.1 Remember
 
@@ -705,12 +705,12 @@ To supersede memory `A` with already-active successor `B`:
 
 1. Authenticate contributor permission and read `A` at current revision `n`.
 2. Verify that `B` is active, in the same namespace, and within a permitted scope relationship.
-3. Conditionally update `A` only where `memory.revision == n`: set `status` to `superseded`, `superseded_by` to `B`, `updated_at`, and revision `n + 1`.
-4. Return success on a retry if `A` already has the intended supersession state; return `409 Conflict` for a competing update.
+3. Update `A`: set `status` to `superseded`, `superseded_by` to `B`, `updated_at`, and revision `n + 1`.
+4. Return success on a retry if `A` already has the intended supersession state. If independent callers pass the preceding read concurrently, the later update wins; this rare last-writer-wins outcome is accepted in the first release.
 
 The first release intentionally retains no separate revision archive. The superseded memory itself remains available only as heavily down-ranked, clearly labelled historical context; withdrawn memories are excluded from recall.
 
-Cross-memory synthesis may later mark several source memories as superseded by a new memory. That is a multi-document saga: a Cloudflare Workflow uses a deterministic operation ID, writes its intended relation into the affected Vespa documents, retries partial steps, and is repairable from Vespa state. Workflow state improves orchestration but is not authoritative.
+Cross-memory synthesis may later mark several source memories as superseded by a new memory. That is a multi-document saga and may justify a Cloudflare Workflow with a deterministic operation ID, retries, and repair from Vespa state. Workflow state would improve orchestration but would not be authoritative.
 
 ### 11.5 Reference document sync
 
@@ -765,7 +765,7 @@ Reference ingestion enforces a different policy because the content is repositor
 | Credential leakage | OS credential store, short-lived tokens, mTLS binding, Worker secrets, and log redaction. |
 | Memory poisoning | Authenticated writes, role checks, validation, rate limits, audit and withdrawal. |
 | Usefulness gaming | Authentication, rate limits, and per-request limits; usefulness represents aggregate events rather than a unique-principal vote. |
-| Replay/duplicate writes | Deterministic document IDs, content hashes, and conditional revision writes. |
+| Replay/duplicate writes | Deterministic document IDs, content hashes, and lifecycle state checks. Rare competing supersessions are accepted as last-writer-wins. |
 | Expensive Vespa queries | Fixed candidate limits, timeout, rank profile, and result size. |
 | Stale superseded hit | Current-memory schema only, explicit supersession pointer, clear result labelling, and a 0.03 lifecycle rank multiplier; withdrawn memories are filtered. |
 | Indexed spec mistaken for source of truth | Typed reference results, immutable revision/path/hash, indexed-copy warning, and explicit instruction to open the repository file. |
