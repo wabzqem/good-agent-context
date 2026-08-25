@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { resolve, relative, sep } from "node:path";
 import fastGlob from "fast-glob";
 import { parse as parseYaml } from "yaml";
@@ -30,10 +30,28 @@ function print(value: unknown): void {
   process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
 }
 
-async function loadConfig(configPath = ".good-agent-context.yaml"): Promise<LocalConfig> {
-  const raw = await readFile(resolve(configPath), "utf8");
+async function resolveConfigPath(configPath?: string): Promise<string> {
+  if (configPath) return resolve(configPath);
+  let directory = resolve(process.env.INIT_CWD ?? process.cwd());
+  while (true) {
+    const candidate = resolve(directory, ".good-agent-context.yaml");
+    try {
+      if ((await stat(candidate)).isFile()) return candidate;
+    } catch {
+      // Try the parent directory. A missing local configuration is reported by
+      // the normal read path below so callers retain a useful ENOENT error.
+    }
+    const parent = resolve(directory, "..");
+    if (parent === directory) return resolve(process.env.INIT_CWD ?? process.cwd(), ".good-agent-context.yaml");
+    directory = parent;
+  }
+}
+
+async function loadConfig(configPath?: string): Promise<LocalConfig> {
+  const resolvedConfigPath = await resolveConfigPath(configPath);
+  const raw = await readFile(resolvedConfigPath, "utf8");
   const config = parseYaml(raw) as LocalConfig;
-  if (!config?.repository || !config.default_scope) throw new Error(`${configPath} requires repository and default_scope.`);
+  if (!config?.repository || !config.default_scope) throw new Error(`${resolvedConfigPath} requires repository and default_scope.`);
   return config;
 }
 
@@ -47,8 +65,9 @@ function chunksForMarkdown(markdown: string): { chunks: string[]; headings: stri
 }
 
 async function syncDocuments(configPath?: string): Promise<void> {
-  const config = await loadConfig(configPath);
-  const repositoryRoot = resolve(configPath ? resolve(configPath, "..") : process.cwd());
+  const resolvedConfigPath = await resolveConfigPath(configPath);
+  const config = await loadConfig(resolvedConfigPath);
+  const repositoryRoot = resolve(resolvedConfigPath, "..");
   const documents: SyncDocumentsRequest["documents"] = [];
   for (const source of config.documents ?? []) {
     if (source.kind !== "specification") continue;

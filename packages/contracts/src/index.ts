@@ -38,13 +38,17 @@ export interface RecallRequest {
   limit?: number;
 }
 
-export interface MemoryResult extends Pick<Memory,
-  "memory_id" | "revision" | "scope_id" | "scope_kind" | "kind" | "title" | "body" |
-  "tags" | "repository_id" | "source_paths" | "source_commit" | "created_at" | "updated_at" |
-  "status" | "superseded_by" | "useful_count" | "last_useful_at"> {
-  relevance: number;
-  match_features?: Record<string, number>;
-}
+/**
+ * The compact, agent-facing representation of a memory. Ranking, tenancy,
+ * timestamps, hashes, and aggregate counters remain internal implementation
+ * details; callers receive only the context and lifecycle data they can act on.
+ */
+export interface MemoryView extends Pick<Memory,
+  "memory_id" | "revision" | "scope_id" | "kind" | "title" | "body" |
+  "tags" | "repository_id" | "source_paths" | "source_commit" |
+  "status" | "superseded_by"> {}
+
+export type MemoryResult = MemoryView;
 
 export interface RecallResponse {
   memories: MemoryResult[];
@@ -66,14 +70,12 @@ export interface CreateMemoryRequest {
 }
 
 export interface RememberResponse {
-  memory: Memory;
+  memory: MemoryView;
   duplicate_candidates: MemoryResult[];
 }
 
 export interface MarkUsefulResponse {
   memory_id: string;
-  useful_count: number;
-  last_useful_at: number;
 }
 
 export interface SupersedeRequest {
@@ -109,12 +111,8 @@ export interface SearchDocumentsRequest {
 }
 
 export interface ReferenceDocumentResult extends Pick<ReferenceDocument,
-  "document_id" | "scope_id" | "kind" | "title" | "chunks" | "chunk_headings" |
-  "repository_id" | "source_path" | "source_uri" | "source_revision" | "source_content_hash" |
-  "indexed_at" | "lifecycle_status" | "source_status" | "superseded_by_document_id" | "guidance_notes"> {
-  relevance: number;
-  match_features?: Record<string, number>;
-}
+  "scope_id" | "title" | "chunks" | "repository_id" | "source_path" |
+  "source_uri" | "source_revision" | "guidance_notes"> {}
 
 export interface SearchDocumentsResponse {
   documents: ReferenceDocumentResult[];

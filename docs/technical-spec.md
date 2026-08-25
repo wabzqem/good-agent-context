@@ -402,13 +402,11 @@ POST /v1/documents/search
 }
 ```
 
-Each result is explicitly typed as `reference_document` and returns:
+Each result is a non-authoritative reference and returns only the context needed to use it:
 
-- Document ID, kind, title, logical scope, and indexed lifecycle/source status.
 - The few best-matching sections rather than the complete file.
-- Repository ID, repository-relative source path, immutable source revision, source URI when available, and content hash.
-- `indexed_at` and a literal `authority: "repository_source"` marker.
-- Separately labelled guidance notes, if present.
+- Title, logical scope, repository ID, repository-relative source path, immutable source revision, and source URI when available.
+- Any concise guidance notes captured during indexing.
 
 Superseded documents are excluded by default but may be requested explicitly. They include `superseded_by_document_id` or a source note when known. Results must tell the agent to open the source file before relying on exact normative wording.
 
@@ -654,17 +652,15 @@ The 180-day half-life, fusion constant, and weights are hypotheses to be validat
 
 ### 10.9 Memory document summary
 
-The recall summary returns only domain fields needed by agents:
+The Worker strips Vespa diagnostics before returning retrieval results. Memory results contain only:
 
 - ID and revision.
 - Scope and kind.
 - Title and body.
 - Source repository and paths.
-- Age and usefulness aggregate.
-- Supersession provenance where explicitly requested.
-- Selected match features for explainability.
+- Status and supersession pointer.
 
-The embedding and internal tenancy fields are not returned.
+Reference results contain only their selected excerpts, source-of-truth location and revision, scope, and guidance notes. Relevance, match features, hashes, tenancy data, timestamps, aggregate usefulness values, and document lifecycle bookkeeping are not returned.
 
 ## 11. Read and write workflows
 

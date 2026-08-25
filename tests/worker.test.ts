@@ -99,7 +99,14 @@ describe("Good Agent Context Worker", () => {
     const worker = createWorker({ fetch: vespa.fetch });
     const response = await worker.fetch(request("/v1/recall", "POST", { query: "gateway authentication", scope_id: "capability:payments", limit: 3 }), env);
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toMatchObject({ memories: [{ memory_id: "mem-gateway" }], scope_ids: ["capability:payments"] });
+    await expect(response.json()).resolves.toEqual({
+      memories: [{
+        memory_id: "mem-gateway", revision: 1, scope_id: "capability:payments", kind: "architecture",
+        title: "Gateway owns agent authentication", body: "Coding agents call the authenticated gateway instead of Vespa.",
+        tags: ["gateway"], source_paths: [], status: "active",
+      }],
+      scope_ids: ["capability:payments"],
+    });
     const search = vespa.requests.find((entry) => entry.url.pathname === "/search/")!.url;
     expect(search.searchParams.get("queryProfile")).toBe("recall");
     expect(search.searchParams.get("namespace_id")).toBe("acme");
@@ -116,7 +123,14 @@ describe("Good Agent Context Worker", () => {
       title: "Gateway is the Vespa boundary", body: "Agent clients use the gateway to access durable memory rather than calling Vespa directly.",
     }), env);
     expect(response.status).toBe(201);
-    await expect(response.json()).resolves.toMatchObject({ memory: { memory_id: "mem-created", namespace_id: "acme" }, duplicate_candidates: [] });
+    await expect(response.json()).resolves.toEqual({
+      memory: {
+        memory_id: "mem-created", revision: 1, scope_id: "capability:payments", kind: "architecture",
+        title: "Gateway is the Vespa boundary", body: "Agent clients use the gateway to access durable memory rather than calling Vespa directly.",
+        tags: [], source_paths: [], status: "active",
+      },
+      duplicate_candidates: [],
+    });
     expect(vespa.records.get("mem-created")).toMatchObject({ namespace_id: "acme", status: "active", useful_count: 0 });
   });
 
@@ -127,11 +141,34 @@ describe("Good Agent Context Worker", () => {
     });
     const worker = createWorker({ fetch: vespa.fetch, now: () => 1_770_000_000_000 });
     const useful = await worker.fetch(request("/v1/memories/old/usefulness", "PUT"), env);
-    await expect(useful.json()).resolves.toMatchObject({ memory_id: "old", useful_count: 1, last_useful_at: 1770000000 });
+    await expect(useful.json()).resolves.toEqual({ memory_id: "old" });
     const superseded = await worker.fetch(request("/v1/memories/old/supersede", "POST", { expected_revision: 1, successor_memory_id: "successor" }), env);
     expect(superseded.status).toBe(200);
     expect(vespa.records.get("old")).toMatchObject({ status: "superseded", superseded_by: "successor", revision: 2 });
     expect(vespa.requests.every((entry) => !entry.url.pathname.includes("memory_revision") && !entry.url.pathname.includes("memory_usefulness"))).toBe(true);
+  });
+
+  it("returns only source-of-truth context for reference-document search", async () => {
+    const vespa = fakeVespa({
+      "ref-api": {
+        document_id: "ref-api", namespace_id: "acme", scope_id: "capability:payments", title: "Payment API specification",
+        chunks: ["## Retries\nClients reuse an idempotency key."], chunk_headings: ["Retries"], repository_id: "repository:payments",
+        source_path: "docs/payment-api.md", source_uri: "https://example.test/docs/payment-api.md", source_revision: "abc123",
+        source_content_hash: "sha256:test", indexed_at: 1770000000, lifecycle_status: "active", source_status: "present",
+        guidance_notes: ["Open the repository source before changing behavior."], matchfeatures: { bm25: 1 },
+      },
+    });
+    const worker = createWorker({ fetch: vespa.fetch });
+    const response = await worker.fetch(request("/v1/documents/search", "POST", { query: "retries", scope_id: "capability:payments" }), env);
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      documents: [{
+        scope_id: "capability:payments", title: "Payment API specification", chunks: ["## Retries\nClients reuse an idempotency key."],
+        repository_id: "repository:payments", source_path: "docs/payment-api.md", source_uri: "https://example.test/docs/payment-api.md",
+        source_revision: "abc123", guidance_notes: ["Open the repository source before changing behavior."],
+      }],
+      scope_ids: ["capability:payments"],
+    });
   });
 
   it("does not let a client choose arbitrary document-sync roots", async () => {

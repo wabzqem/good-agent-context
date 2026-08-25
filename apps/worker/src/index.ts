@@ -3,6 +3,7 @@ import type {
   CreateMemoryRequest,
   Memory,
   MemoryResult,
+  MemoryView,
   RecallResponse,
   RememberResponse,
   ReferenceDocument,
@@ -84,13 +85,35 @@ function toStringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }
 
-function matchFeatures(value: unknown): Record<string, number> | undefined {
-  if (!isRecord(value)) return undefined;
-  const values = Object.entries(value).filter((entry): entry is [string, number] => typeof entry[1] === "number");
-  return values.length === 0 ? undefined : Object.fromEntries(values);
+type RankedMemoryResult = MemoryResult & { relevance: number };
+type RankedReferenceDocumentResult = ReferenceDocumentResult & { document_id: string; relevance: number };
+
+function memoryView(memory: Memory): MemoryView {
+  return {
+    memory_id: memory.memory_id,
+    revision: memory.revision,
+    scope_id: memory.scope_id,
+    kind: memory.kind,
+    title: memory.title,
+    body: memory.body,
+    tags: memory.tags,
+    repository_id: memory.repository_id,
+    source_paths: memory.source_paths,
+    source_commit: memory.source_commit,
+    status: memory.status,
+    superseded_by: memory.superseded_by,
+  };
 }
 
-function memoryResult(hit: unknown): MemoryResult | undefined {
+function withoutMemoryRank({ relevance: _relevance, ...memory }: RankedMemoryResult): MemoryResult {
+  return memory;
+}
+
+function withoutDocumentRank({ document_id: _documentId, relevance: _relevance, ...document }: RankedReferenceDocumentResult): ReferenceDocumentResult {
+  return document;
+}
+
+function memoryResult(hit: unknown): RankedMemoryResult | undefined {
   if (!isRecord(hit) || !isRecord(hit.fields)) return undefined;
   const fields = hit.fields;
   const memoryId = fields.memory_id;
@@ -99,7 +122,6 @@ function memoryResult(hit: unknown): MemoryResult | undefined {
     memory_id: memoryId,
     revision: toNumber(fields.revision),
     scope_id: typeof fields.scope_id === "string" ? fields.scope_id : "",
-    scope_kind: (typeof fields.scope_kind === "string" ? fields.scope_kind : "component") as MemoryResult["scope_kind"],
     kind: (typeof fields.kind === "string" ? fields.kind : "implementation") as MemoryResult["kind"],
     title: typeof fields.title === "string" ? fields.title : "",
     body: typeof fields.body === "string" ? fields.body : "",
@@ -107,18 +129,13 @@ function memoryResult(hit: unknown): MemoryResult | undefined {
     repository_id: typeof fields.repository_id === "string" ? fields.repository_id : undefined,
     source_paths: toStringArray(fields.source_paths),
     source_commit: typeof fields.source_commit === "string" ? fields.source_commit : undefined,
-    created_at: toNumber(fields.created_at),
-    updated_at: toNumber(fields.updated_at),
     status: (typeof fields.status === "string" ? fields.status : "active") as MemoryResult["status"],
     superseded_by: typeof fields.superseded_by === "string" ? fields.superseded_by : undefined,
-    useful_count: toNumber(fields.useful_count),
-    last_useful_at: toNumber(fields.last_useful_at),
     relevance: toNumber(hit.relevance),
-    match_features: matchFeatures(fields.matchfeatures),
   };
 }
 
-function referenceResult(hit: unknown): ReferenceDocumentResult | undefined {
+function referenceResult(hit: unknown): RankedReferenceDocumentResult | undefined {
   if (!isRecord(hit) || !isRecord(hit.fields)) return undefined;
   const fields = hit.fields;
   const documentId = fields.document_id;
@@ -126,22 +143,14 @@ function referenceResult(hit: unknown): ReferenceDocumentResult | undefined {
   return {
     document_id: documentId,
     scope_id: typeof fields.scope_id === "string" ? fields.scope_id : "",
-    kind: "specification",
     title: typeof fields.title === "string" ? fields.title : "",
     chunks: toStringArray(fields.chunks),
-    chunk_headings: toStringArray(fields.chunk_headings),
     repository_id: typeof fields.repository_id === "string" ? fields.repository_id : "",
     source_path: typeof fields.source_path === "string" ? fields.source_path : "",
     source_uri: typeof fields.source_uri === "string" ? fields.source_uri : undefined,
     source_revision: typeof fields.source_revision === "string" ? fields.source_revision : "",
-    source_content_hash: typeof fields.source_content_hash === "string" ? fields.source_content_hash : "",
-    indexed_at: toNumber(fields.indexed_at),
-    lifecycle_status: (typeof fields.lifecycle_status === "string" ? fields.lifecycle_status : "active") as ReferenceDocumentResult["lifecycle_status"],
-    source_status: (typeof fields.source_status === "string" ? fields.source_status : "unknown") as ReferenceDocumentResult["source_status"],
-    superseded_by_document_id: typeof fields.superseded_by_document_id === "string" ? fields.superseded_by_document_id : undefined,
     guidance_notes: toStringArray(fields.guidance_notes),
     relevance: toNumber(hit.relevance),
-    match_features: matchFeatures(fields.matchfeatures),
   };
 }
 
@@ -329,16 +338,16 @@ async function createMemory(fetchImpl: FetchLike, env: Env, now: () => number, i
   return fields;
 }
 
-async function duplicateCandidates(fetchImpl: FetchLike, env: Env, input: CreateMemoryRequest): Promise<MemoryResult[]> {
+async function duplicateCandidates(fetchImpl: FetchLike, env: Env, input: CreateMemoryRequest): Promise<RankedMemoryResult[]> {
   const scopes = scopeIds(input.scope_id);
   const query = `${input.title}\n${input.body}`;
   const hits = (await Promise.all(scopes.map((scope) => queryScope(fetchImpl, env, "recall", query, scope))))
-    .flat().map(memoryResult).filter((hit): hit is MemoryResult => hit !== undefined)
+    .flat().map(memoryResult).filter((hit): hit is RankedMemoryResult => hit !== undefined)
     .filter((hit) => hit.status === "active" && hit.memory_id !== input.memory_id);
   return merge(hits, (hit) => hit.memory_id, 3);
 }
 
-async function markUseful(fetchImpl: FetchLike, env: Env, now: () => number, memoryId: string): Promise<{ memory_id: string; useful_count: number; last_useful_at: number }> {
+async function markUseful(fetchImpl: FetchLike, env: Env, now: () => number, memoryId: string): Promise<{ memory_id: string }> {
   const memory = await getMemory(fetchImpl, env, memoryId);
   const timestamp = currentSeconds(now);
   const response = await vespaJson(fetchImpl, documentUrl(env, "memory", memoryId), {
@@ -347,7 +356,7 @@ async function markUseful(fetchImpl: FetchLike, env: Env, now: () => number, mem
     body: JSON.stringify({ fields: { useful_count: { increment: 1 }, last_useful_at: { assign: timestamp } } }),
   });
   if (response.status < 200 || response.status >= 300) throw new RequestProblem(502, "vespa_write_failed", "Vespa could not record usefulness.");
-  return { memory_id: memory.memory_id, useful_count: memory.useful_count + 1, last_useful_at: timestamp };
+  return { memory_id: memory.memory_id };
 }
 
 async function supersede(fetchImpl: FetchLike, env: Env, now: () => number, memoryId: string, body: unknown): Promise<Memory> {
@@ -440,8 +449,8 @@ export function createWorker(overrides: Partial<Dependencies> = {}) {
           const input = parseSearch(await requestJson(request));
           const scopes = scopeIds(input.scope_id);
           const hits = (await Promise.all(scopes.map((scope) => queryScope(vespaFetch, env, "recall", input.query, scope))))
-            .flat().map(memoryResult).filter((hit): hit is MemoryResult => hit !== undefined);
-          return json({ memories: merge(hits, (hit) => hit.memory_id, input.limit ?? 8), scope_ids: scopes } satisfies RecallResponse);
+            .flat().map(memoryResult).filter((hit): hit is RankedMemoryResult => hit !== undefined);
+          return json({ memories: merge(hits, (hit) => hit.memory_id, input.limit ?? 8).map(withoutMemoryRank), scope_ids: scopes } satisfies RecallResponse);
         }
         if (request.method === "POST" && url.pathname === "/v1/memories") {
           const input = parseCreateMemory(await requestJson(request));
@@ -449,24 +458,24 @@ export function createWorker(overrides: Partial<Dependencies> = {}) {
             createMemory(vespaFetch, env, dependencies.now, input),
             duplicateCandidates(vespaFetch, env, input),
           ]);
-          return json({ memory, duplicate_candidates } satisfies RememberResponse, 201);
+          return json({ memory: memoryView(memory), duplicate_candidates: duplicate_candidates.map(withoutMemoryRank) } satisfies RememberResponse, 201);
         }
         if (request.method === "POST" && url.pathname === "/v1/documents/search") {
           const input = parseSearch(await requestJson(request));
           const scopes = scopeIds(input.scope_id);
           const hits = (await Promise.all(scopes.map((scope) => queryScope(vespaFetch, env, "documents", input.query, scope))))
-            .flat().map(referenceResult).filter((hit): hit is ReferenceDocumentResult => hit !== undefined);
-          return json({ documents: merge(hits, (hit) => hit.document_id, input.limit ?? 8), scope_ids: scopes } satisfies SearchDocumentsResponse);
+            .flat().map(referenceResult).filter((hit): hit is RankedReferenceDocumentResult => hit !== undefined);
+          return json({ documents: merge(hits, (hit) => hit.document_id, input.limit ?? 8).map(withoutDocumentRank), scope_ids: scopes } satisfies SearchDocumentsResponse);
         }
         if (request.method === "POST" && url.pathname === "/v1/documents/sync") {
           return json(await syncDocuments(vespaFetch, env, dependencies.now, await requestJson(request)), 201);
         }
         const memoryMatch = /^\/v1\/memories\/([^/]+)$/.exec(url.pathname);
-        if (request.method === "GET" && memoryMatch?.[1]) return json(await getMemory(vespaFetch, env, decodeURIComponent(memoryMatch[1])));
+        if (request.method === "GET" && memoryMatch?.[1]) return json(memoryView(await getMemory(vespaFetch, env, decodeURIComponent(memoryMatch[1]))));
         const usefulMatch = /^\/v1\/memories\/([^/]+)\/usefulness$/.exec(url.pathname);
         if (request.method === "PUT" && usefulMatch?.[1]) return json(await markUseful(vespaFetch, env, dependencies.now, decodeURIComponent(usefulMatch[1])));
         const supersedeMatch = /^\/v1\/memories\/([^/]+)\/supersede$/.exec(url.pathname);
-        if (request.method === "POST" && supersedeMatch?.[1]) return json(await supersede(vespaFetch, env, dependencies.now, decodeURIComponent(supersedeMatch[1]), await requestJson(request)));
+        if (request.method === "POST" && supersedeMatch?.[1]) return json(memoryView(await supersede(vespaFetch, env, dependencies.now, decodeURIComponent(supersedeMatch[1]), await requestJson(request))));
         return error(404, "not_found", "Route not found.");
       } catch (caught) {
         if (caught instanceof RequestProblem) return error(caught.status, caught.code, caught.message);
