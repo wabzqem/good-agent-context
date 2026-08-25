@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { createWorker, type Env } from "../apps/worker/src/index";
+import { authorizationFromAccessClaims, createWorker, type Env } from "../apps/worker/src/index";
 
 const env: Env = {
   LOCAL_DEVELOPMENT: "true",
   DEVELOPMENT_AUTH_TOKEN: "local-token",
+  DEVELOPMENT_AUTH_ROLE: "contributor",
   NAMESPACE_ID: "acme",
   VESPA_ENDPOINT: "http://vespa.test:8080",
 };
@@ -92,6 +93,50 @@ describe("Good Agent Context Worker", () => {
     );
     expect(response.status).toBe(503);
     await expect(response.json()).resolves.toMatchObject({ error: { code: "authentication_not_configured" } });
+  });
+
+  it("publishes protected-resource metadata without requiring an Access assertion", async () => {
+    const vespa = fakeVespa({});
+    const worker = createWorker({ fetch: vespa.fetch });
+    const response = await worker.fetch(new Request("https://api.example/.well-known/oauth-protected-resource/mcp"), {
+      ...env,
+      ACCESS_TEAM_DOMAIN: "https://team.example.cloudflareaccess.com",
+    });
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      resource: "https://api.example/mcp",
+      authorization_servers: ["https://team.example.cloudflareaccess.com"],
+    });
+  });
+
+  it("enforces reader and contributor route permissions after local authentication", async () => {
+    const vespa = fakeVespa({ "mem-gateway": memory("mem-gateway") });
+    const worker = createWorker({ fetch: vespa.fetch });
+    const readerEnv = { ...env, DEVELOPMENT_AUTH_ROLE: "reader" as const };
+    const recall = await worker.fetch(request("/v1/recall", "POST", { query: "gateway", scope_id: "capability:payments" }), readerEnv);
+    expect(recall.status).toBe(200);
+    const remember = await worker.fetch(request("/v1/memories", "POST", {
+      memory_id: "mem-denied", scope_id: "capability:payments", scope_kind: "capability", kind: "architecture",
+      title: "Denied", body: "A reader must not create memories.",
+    }), readerEnv);
+    expect(remember.status).toBe(403);
+    await expect(remember.json()).resolves.toMatchObject({ error: { code: "forbidden" } });
+    expect(vespa.records.has("mem-denied")).toBe(false);
+  });
+
+  it("maps only verified service-token client IDs to configured roles", () => {
+    expect(authorizationFromAccessClaims(
+      { common_name: "ci-client" },
+      { DEFAULT_ROLE: "reader", SERVICE_TOKEN_ROLES_JSON: '{"ci-client":"curator"}' },
+    )).toEqual({ role: "curator", principal_type: "service" });
+    expect(() => authorizationFromAccessClaims(
+      { common_name: "unknown-client" },
+      { DEFAULT_ROLE: "contributor", SERVICE_TOKEN_ROLES_JSON: '{"ci-client":"contributor"}' },
+    )).toThrow(/not authorized/);
+    expect(authorizationFromAccessClaims(
+      { aud: "curator-audience" },
+      { DEFAULT_ROLE: "reader", CURATOR_ACCESS_AUD: "curator-audience" },
+    )).toEqual({ role: "curator", principal_type: "user" });
   });
 
   it("injects fixed Vespa recall parameters instead of accepting YQL", async () => {

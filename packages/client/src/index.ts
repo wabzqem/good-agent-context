@@ -26,6 +26,10 @@ export interface GoodContextClientOptions {
   baseUrl: string;
   token?: string;
   tokenProvider?: () => Promise<string | undefined>;
+  /** Cloudflare Access service-token client ID for unattended workloads. */
+  serviceTokenId?: string;
+  /** Cloudflare Access service-token secret for unattended workloads. */
+  serviceTokenSecret?: string;
   fetch?: typeof fetch;
 }
 
@@ -34,6 +38,9 @@ export class GoodContextClient {
   private readonly baseUrl: URL;
 
   constructor(private readonly options: GoodContextClientOptions) {
+    if (Boolean(options.serviceTokenId) !== Boolean(options.serviceTokenSecret)) {
+      throw new Error("Both serviceTokenId and serviceTokenSecret are required for Cloudflare Access service-token authentication.");
+    }
     this.fetchImpl = options.fetch ?? fetch;
     this.baseUrl = new URL(options.baseUrl.endsWith("/") ? options.baseUrl : `${options.baseUrl}/`);
   }
@@ -67,12 +74,18 @@ export class GoodContextClient {
   }
 
   private async request<T>(path: string, method: string, body?: unknown): Promise<T> {
-    const token = this.options.token ?? await this.options.tokenProvider?.();
-    if (!token) throw new Error("No Access token is available. Run `good-context auth login`, or set GOOD_CONTEXT_TOKEN for local development.");
+    const serviceTokenHeaders = this.options.serviceTokenId && this.options.serviceTokenSecret
+      ? {
+        "cf-access-client-id": this.options.serviceTokenId,
+        "cf-access-client-secret": this.options.serviceTokenSecret,
+      }
+      : undefined;
+    const token = serviceTokenHeaders ? undefined : this.options.token ?? await this.options.tokenProvider?.();
+    if (!serviceTokenHeaders && !token) throw new Error("No Access token is available. Run `good-context auth login`, set GOOD_CONTEXT_TOKEN for local development, or configure a Cloudflare Access service token.");
     const response = await this.fetchImpl(new URL(path.slice(1), this.baseUrl), {
       method,
       headers: {
-        authorization: `Bearer ${token}`,
+        ...(serviceTokenHeaders ?? { authorization: `Bearer ${token}` }),
         ...(body === undefined ? {} : { "content-type": "application/json" }),
       },
       body: body === undefined ? undefined : JSON.stringify(body),
@@ -88,6 +101,14 @@ export class GoodContextClient {
 
 export function clientFromEnvironment(environment: Record<string, string | undefined> = process.env): GoodContextClient {
   const baseUrl = environment.GOOD_CONTEXT_URL ?? "https://gac.wabz.net";
+  const serviceTokenId = environment.GOOD_CONTEXT_SERVICE_TOKEN_ID;
+  const serviceTokenSecret = environment.GOOD_CONTEXT_SERVICE_TOKEN_SECRET;
   const token = environment.GOOD_CONTEXT_TOKEN;
-  return new GoodContextClient({ baseUrl, token, tokenProvider: token ? undefined : () => storedAccessToken(baseUrl) });
+  return new GoodContextClient({
+    baseUrl,
+    token,
+    serviceTokenId,
+    serviceTokenSecret,
+    tokenProvider: token || serviceTokenId || serviceTokenSecret ? undefined : () => storedAccessToken(baseUrl),
+  });
 }

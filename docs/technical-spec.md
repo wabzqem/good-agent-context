@@ -199,7 +199,7 @@ Managed OAuth is currently marked beta by Cloudflare, so Phase 0 includes a comp
 
 An stdio MCP process delegates login and token refresh to the shared client credential helper. It may reuse the Managed OAuth session created by the CLI. CI may inject Access service-token credentials through protected environment variables.
 
-The adapter sends the access token to the Good Agent Context API only. It never forwards that token to Vespa or any unrelated downstream service.
+The adapter sends the access token to the Good Agent Context API only. It never forwards that token to Vespa or any unrelated downstream service. An unattended CLI or stdio host may instead set `GOOD_CONTEXT_SERVICE_TOKEN_ID` and `GOOD_CONTEXT_SERVICE_TOKEN_SECRET`; the shared client sends them as Cloudflare's `CF-Access-Client-Id` and `CF-Access-Client-Secret` headers. Those environment values belong in the workload secret manager, never in an MCP configuration committed to a repository.
 
 ### 6.4 Remote HTTP MCP authentication
 
@@ -212,13 +212,15 @@ A future HTTP MCP endpoint follows the current MCP authorization specification a
 - Tokens are audience-bound to the MCP/API resource.
 - The server validates the audience and never passes the inbound token through to Vespa.
 
+The deployed Worker already exposes `/.well-known/oauth-protected-resource/mcp`, naming the planned `https://<host>/mcp` resource and the configured Cloudflare Access authorization server. A `401` response includes a `WWW-Authenticate: Bearer resource_metadata=...` challenge. This is discovery only: the remote `/mcp` transport is not yet implemented, and the supported transport remains local stdio.
+
 Cloudflare's Workers OAuth Provider Library may be used if Managed OAuth cannot directly satisfy the remote MCP client's discovery flow. Any KV binding required by that library stores only short-lived OAuth grant/token state; it is not a product datastore and is not required for recall correctness.
 
 See the [MCP 2025-11-25 authorization specification](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization).
 
 ### 6.5 Workload authentication
 
-CI systems and unattended agents use [Cloudflare Access service tokens](https://developers.cloudflare.com/cloudflare-one/access-controls/service-credentials/service-tokens/) accepted by a `Service Auth` policy. The client ID and secret are stored in the CI secret manager, sent only to the Worker, rotated, and independently revocable. Where Managed OAuth is available, it is preferred for human-initiated coding-agent sessions because it retains user identity without distributing a shared secret.
+CI systems and unattended agents use [Cloudflare Access service tokens](https://developers.cloudflare.com/cloudflare-one/access-controls/service-credentials/service-tokens/) accepted by a `Service Auth` policy. The client ID and secret are stored in the CI secret manager, sent only to the Worker, rotated, and independently revocable. After Access verifies them, it adds a signed assertion whose `common_name` identifies the service-token client ID; the Worker maps that verified ID through `SERVICE_TOKEN_ROLES_JSON`. An unmapped service token is denied rather than receiving the interactive default role. Where Managed OAuth is available, it is preferred for human-initiated coding-agent sessions because it retains user identity without distributing a shared secret.
 
 Long-lived personal access tokens are not part of the design.
 
@@ -234,6 +236,8 @@ Initial namespace roles are:
 
 Capability-private deployments may grant roles at a scope subtree rather than the entire namespace.
 
+The Phase 3 route matrix is deliberately small: `reader` can recall, inspect a memory, and search reference documents; `contributor` additionally remembers, marks useful, supersedes, and syncs allowlisted reference documents. Curator-only routes will be added with withdrawal, restoration, and scope administration; until then a curator is a contributor with a reserved elevation path.
+
 ### 6.7 Worker-derived authorization context
 
 The Worker derives the following context from the validated Access token, Access application/policy, and deployment configuration:
@@ -243,7 +247,7 @@ namespace_id
 roles
 ```
 
-The initial hosted model is one namespace per Worker/Access application. This makes the namespace an immutable deployment binding rather than a caller-controlled claim and avoids a tenant registry. Initially, an Access admission policy grants a configured default role (normally `contributor`), while curator operations use a separately protected Access application/audience or curator service token. The Worker must not infer a role from an unverified email string. More granular group-to-role mapping is an explicit follow-up once its claims and policy contract are proven.
+The initial hosted model is one namespace per Worker/Access application. This makes the namespace an immutable deployment binding rather than a caller-controlled claim and avoids a tenant registry. The Worker validates the JWT before considering claims. A verified user assertion for the primary audience receives `DEFAULT_ROLE` (normally `contributor`); a verified assertion for `CURATOR_ACCESS_AUD` receives `curator`; and a verified service-token `common_name` is mapped only by `SERVICE_TOKEN_ROLES_JSON`. The Worker must not infer a role from an email string or any unverified claim. More granular group-to-role mapping is an explicit follow-up once its claims and policy contract are proven.
 
 A later shared multi-tenant Worker must carry a signed namespace claim or use an equally strong host-to-namespace binding; a request field is never sufficient.
 

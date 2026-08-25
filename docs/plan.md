@@ -122,7 +122,7 @@ Acceptance criteria:
 
 ### Phase 3: Cloudflare authentication and Vespa lifecycle storage
 
-Implementation status: Cloudflare Access now protects the deployed Worker, which independently validates the signed Access assertion's issuer and audience. A Cloudflare Worker mTLS binding is deployed and trusted by the Vespa Cloud application. The CLI implements managed-OAuth discovery, dynamic loopback registration, PKCE, refresh, and macOS Keychain storage; it awaits an interactive end-to-end acceptance check. Service-token support, principal-to-role mapping, and remote-MCP discovery remain to be implemented.
+Implementation status: implemented in the Worker and clients. Cloudflare Access protects the deployed Worker, which independently verifies the signed assertion's issuer, signature, expiry, and one of the configured Access audiences. A configured default role applies to verified interactive users; an optional curator audience grants `curator`; and verified Access service-token client IDs map explicitly to roles through `SERVICE_TOKEN_ROLES_JSON`. Unmapped service tokens are denied. The CLI implements Managed OAuth discovery, dynamic loopback registration, PKCE, refresh, and macOS Keychain storage; unattended clients use the Cloudflare service-token headers. The Worker publishes OAuth Protected Resource Metadata for a future remote `/mcp` endpoint, while the supported MCP transport remains stdio.
 
 Deliverables:
 
@@ -134,6 +134,8 @@ Deliverables:
 - Reserve the existing Vespa scope schema for a future curated graph; do not require it on the normal request path.
 - Bind an outbound mTLS certificate to the Worker for Vespa Cloud access.
 - Implement current MCP HTTP authorization discovery for a future remote MCP endpoint.
+
+Operator configuration: create a Cloudflare Access `Service Auth` policy for each CI token, map its client ID to a role in `SERVICE_TOKEN_ROLES_JSON`, and, when curator operations are introduced, configure `CURATOR_ACCESS_AUD` for a separately protected Access application. These values are deployment configuration; token secrets never enter Worker variables or the repository.
 
 Acceptance criteria:
 

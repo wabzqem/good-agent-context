@@ -10,16 +10,26 @@ import type {
   ReferenceDocumentResult,
   SearchDocumentsResponse,
 } from "@good-agent-context/contracts";
-import { createRemoteJWKSet, jwtVerify } from "jose";
+import { createRemoteJWKSet, jwtVerify, type JWTPayload } from "jose";
 import { RequestProblem, isRecord, parseCreateMemory, parseSearch, parseSupersede, requiredString, scopedId } from "./validation";
+
+export type NamespaceRole = "reader" | "contributor" | "curator";
 
 export interface Env {
   LOCAL_DEVELOPMENT: string;
   DEVELOPMENT_AUTH_TOKEN?: string;
+  /** Local-only role assigned after DEVELOPMENT_AUTH_TOKEN has been verified. */
+  DEVELOPMENT_AUTH_ROLE?: NamespaceRole;
   /** Cloudflare Access team domain, including https:// and no path. */
   ACCESS_TEAM_DOMAIN?: string;
   /** Audience (AUD) of the Cloudflare Access application protecting this Worker. */
   ACCESS_AUD?: string;
+  /** Optional distinct Cloudflare Access application audience for curator operations. */
+  CURATOR_ACCESS_AUD?: string;
+  /** Default user role for an accepted primary Access audience. */
+  DEFAULT_ROLE?: NamespaceRole;
+  /** JSON object mapping verified Access service-token client IDs to namespace roles. */
+  SERVICE_TOKEN_ROLES_JSON?: string;
   NAMESPACE_ID: string;
   VESPA_ENDPOINT: string;
   REFERENCE_SOURCES_JSON?: string;
@@ -36,12 +46,12 @@ interface Dependencies {
 const jsonHeaders = { "content-type": "application/json; charset=utf-8" };
 const accessJwksByTeamDomain = new Map<string, ReturnType<typeof createRemoteJWKSet>>();
 
-function json(value: unknown, status = 200): Response {
-  return new Response(JSON.stringify(value), { status, headers: jsonHeaders });
+function json(value: unknown, status = 200, headers: HeadersInit = {}): Response {
+  return new Response(JSON.stringify(value), { status, headers: { ...jsonHeaders, ...headers } });
 }
 
-function error(status: number, code: string, message: string): Response {
-  return json({ error: { code, message } } satisfies ApiErrorBody, status);
+function error(status: number, code: string, message: string, headers?: HeadersInit): Response {
+  return json({ error: { code, message } } satisfies ApiErrorBody, status, headers);
 }
 
 async function requestJson(request: Request): Promise<unknown> {
@@ -177,7 +187,70 @@ function accessJwks(teamDomain: string): ReturnType<typeof createRemoteJWKSet> {
   return jwks;
 }
 
-async function requireIdentity(request: Request, env: Env): Promise<void> {
+interface AuthorizationContext {
+  role: NamespaceRole;
+  principal_type: "development" | "user" | "service";
+}
+
+const roleRank: Record<NamespaceRole, number> = { reader: 1, contributor: 2, curator: 3 };
+
+function configuredRole(value: unknown, setting: string): NamespaceRole {
+  if (value === "reader" || value === "contributor" || value === "curator") return value;
+  throw new RequestProblem(503, "authorization_misconfigured", `${setting} must be reader, contributor, or curator.`);
+}
+
+function configuredDefaultRole(env: Pick<Env, "LOCAL_DEVELOPMENT" | "DEVELOPMENT_AUTH_ROLE" | "DEFAULT_ROLE">): NamespaceRole {
+  if (env.LOCAL_DEVELOPMENT === "true") return configuredRole(env.DEVELOPMENT_AUTH_ROLE ?? "contributor", "DEVELOPMENT_AUTH_ROLE");
+  if (!env.DEFAULT_ROLE) throw new RequestProblem(503, "authorization_misconfigured", "DEFAULT_ROLE is required for hosted requests.");
+  return configuredRole(env.DEFAULT_ROLE, "DEFAULT_ROLE");
+}
+
+function serviceTokenRoles(env: Pick<Env, "SERVICE_TOKEN_ROLES_JSON">): Record<string, NamespaceRole> {
+  if (!env.SERVICE_TOKEN_ROLES_JSON) return {};
+  try {
+    const parsed: unknown = JSON.parse(env.SERVICE_TOKEN_ROLES_JSON);
+    if (!isRecord(parsed)) throw new Error("not an object");
+    return Object.fromEntries(Object.entries(parsed).map(([clientId, role]) => [clientId, configuredRole(role, "SERVICE_TOKEN_ROLES_JSON")])) as Record<string, NamespaceRole>;
+  } catch (caught) {
+    if (caught instanceof RequestProblem) throw caught;
+    throw new RequestProblem(503, "authorization_misconfigured", "SERVICE_TOKEN_ROLES_JSON must be a JSON object mapping client IDs to roles.");
+  }
+}
+
+function audiences(payload: JWTPayload): string[] {
+  return typeof payload.aud === "string" ? [payload.aud] : Array.isArray(payload.aud) ? payload.aud.filter((audience): audience is string => typeof audience === "string") : [];
+}
+
+/**
+ * Claims reach this function only after jose has verified the Access JWT's
+ * signature, issuer, expiry, and allowed audience. Access emits common_name
+ * for service-token assertions, not for ordinary user assertions.
+ */
+export function authorizationFromAccessClaims(
+  payload: JWTPayload,
+  env: Pick<Env, "DEFAULT_ROLE" | "CURATOR_ACCESS_AUD" | "SERVICE_TOKEN_ROLES_JSON">,
+): AuthorizationContext {
+  const serviceTokenClientId = payload.common_name;
+  if (typeof serviceTokenClientId === "string" && serviceTokenClientId.length > 0) {
+    const role = serviceTokenRoles(env)[serviceTokenClientId];
+    if (!role) {
+      throw new RequestProblem(403, "service_token_not_authorized", "This service token is not authorized for the namespace.");
+    }
+    return { role, principal_type: "service" };
+  }
+  if (env.CURATOR_ACCESS_AUD && audiences(payload).includes(env.CURATOR_ACCESS_AUD)) {
+    return { role: "curator", principal_type: "user" };
+  }
+  return { role: configuredDefaultRole({ LOCAL_DEVELOPMENT: "false", DEFAULT_ROLE: env.DEFAULT_ROLE }), principal_type: "user" };
+}
+
+function requireRole(context: AuthorizationContext, required: NamespaceRole): void {
+  if (roleRank[context.role] < roleRank[required]) {
+    throw new RequestProblem(403, "forbidden", `${required} role is required for this operation.`);
+  }
+}
+
+async function requireIdentity(request: Request, env: Env): Promise<AuthorizationContext> {
   if (env.LOCAL_DEVELOPMENT === "true") {
     if (!env.DEVELOPMENT_AUTH_TOKEN) {
       throw new RequestProblem(500, "development_auth_not_configured", "DEVELOPMENT_AUTH_TOKEN is required for local development.");
@@ -185,7 +258,7 @@ async function requireIdentity(request: Request, env: Env): Promise<void> {
     if (request.headers.get("authorization") !== `Bearer ${env.DEVELOPMENT_AUTH_TOKEN}`) {
       throw new RequestProblem(401, "unauthorized", "A valid local development bearer token is required.");
     }
-    return;
+    return { role: configuredDefaultRole(env), principal_type: "development" };
   }
 
   if (!env.ACCESS_TEAM_DOMAIN || !env.ACCESS_AUD) {
@@ -195,14 +268,31 @@ async function requireIdentity(request: Request, env: Env): Promise<void> {
   if (!assertion) {
     throw new RequestProblem(401, "unauthorized", "A valid Cloudflare Access assertion is required.");
   }
+  let payload: JWTPayload;
   try {
-    await jwtVerify(assertion, accessJwks(env.ACCESS_TEAM_DOMAIN), {
+    const audiencesToAccept = [env.ACCESS_AUD, ...(env.CURATOR_ACCESS_AUD ? [env.CURATOR_ACCESS_AUD] : [])];
+    ({ payload } = await jwtVerify(assertion, accessJwks(env.ACCESS_TEAM_DOMAIN), {
       issuer: env.ACCESS_TEAM_DOMAIN,
-      audience: env.ACCESS_AUD,
-    });
+      audience: audiencesToAccept,
+    }));
   } catch {
     throw new RequestProblem(401, "unauthorized", "The Cloudflare Access assertion is invalid or expired.");
   }
+  return authorizationFromAccessClaims(payload, env);
+}
+
+function mcpProtectedResourceMetadataUrl(url: URL): string {
+  return new URL("/.well-known/oauth-protected-resource/mcp", url.origin).toString();
+}
+
+function mcpProtectedResourceMetadata(url: URL, env: Env): Response {
+  if (!env.ACCESS_TEAM_DOMAIN) {
+    return error(503, "authentication_not_configured", "Cloudflare Access metadata is not configured.");
+  }
+  return json({
+    resource: new URL("/mcp", url.origin).toString(),
+    authorization_servers: [env.ACCESS_TEAM_DOMAIN],
+  });
 }
 
 function scopeIds(scopeId: string): string[] {
@@ -439,13 +529,17 @@ export function createWorker(overrides: Partial<Dependencies> = {}) {
     async fetch(request: Request, env: Env): Promise<Response> {
       const url = new URL(request.url);
       if (request.method === "GET" && url.pathname === "/health") return json({ ok: true });
+      if (request.method === "GET" && (url.pathname === "/.well-known/oauth-protected-resource" || url.pathname === "/.well-known/oauth-protected-resource/mcp")) {
+        return mcpProtectedResourceMetadata(url, env);
+      }
       try {
-        await requireIdentity(request, env);
+        const authorization = await requireIdentity(request, env);
         const vespaFetch = env.LOCAL_DEVELOPMENT === "true"
           ? dependencies.fetch
           : env.VESPA_MTLS?.fetch.bind(env.VESPA_MTLS);
         if (!vespaFetch) throw new RequestProblem(503, "vespa_mtls_not_configured", "Production Vespa access requires the VESPA_MTLS binding.");
         if (request.method === "POST" && url.pathname === "/v1/recall") {
+          requireRole(authorization, "reader");
           const input = parseSearch(await requestJson(request));
           const scopes = scopeIds(input.scope_id);
           const hits = (await Promise.all(scopes.map((scope) => queryScope(vespaFetch, env, "recall", input.query, scope))))
@@ -453,6 +547,7 @@ export function createWorker(overrides: Partial<Dependencies> = {}) {
           return json({ memories: merge(hits, (hit) => hit.memory_id, input.limit ?? 8).map(withoutMemoryRank), scope_ids: scopes } satisfies RecallResponse);
         }
         if (request.method === "POST" && url.pathname === "/v1/memories") {
+          requireRole(authorization, "contributor");
           const input = parseCreateMemory(await requestJson(request));
           const [memory, duplicate_candidates] = await Promise.all([
             createMemory(vespaFetch, env, dependencies.now, input),
@@ -461,6 +556,7 @@ export function createWorker(overrides: Partial<Dependencies> = {}) {
           return json({ memory: memoryView(memory), duplicate_candidates: duplicate_candidates.map(withoutMemoryRank) } satisfies RememberResponse, 201);
         }
         if (request.method === "POST" && url.pathname === "/v1/documents/search") {
+          requireRole(authorization, "reader");
           const input = parseSearch(await requestJson(request));
           const scopes = scopeIds(input.scope_id);
           const hits = (await Promise.all(scopes.map((scope) => queryScope(vespaFetch, env, "documents", input.query, scope))))
@@ -468,17 +564,30 @@ export function createWorker(overrides: Partial<Dependencies> = {}) {
           return json({ documents: merge(hits, (hit) => hit.document_id, input.limit ?? 8).map(withoutDocumentRank), scope_ids: scopes } satisfies SearchDocumentsResponse);
         }
         if (request.method === "POST" && url.pathname === "/v1/documents/sync") {
+          requireRole(authorization, "contributor");
           return json(await syncDocuments(vespaFetch, env, dependencies.now, await requestJson(request)), 201);
         }
         const memoryMatch = /^\/v1\/memories\/([^/]+)$/.exec(url.pathname);
-        if (request.method === "GET" && memoryMatch?.[1]) return json(memoryView(await getMemory(vespaFetch, env, decodeURIComponent(memoryMatch[1]))));
+        if (request.method === "GET" && memoryMatch?.[1]) {
+          requireRole(authorization, "reader");
+          return json(memoryView(await getMemory(vespaFetch, env, decodeURIComponent(memoryMatch[1]))));
+        }
         const usefulMatch = /^\/v1\/memories\/([^/]+)\/usefulness$/.exec(url.pathname);
-        if (request.method === "PUT" && usefulMatch?.[1]) return json(await markUseful(vespaFetch, env, dependencies.now, decodeURIComponent(usefulMatch[1])));
+        if (request.method === "PUT" && usefulMatch?.[1]) {
+          requireRole(authorization, "contributor");
+          return json(await markUseful(vespaFetch, env, dependencies.now, decodeURIComponent(usefulMatch[1])));
+        }
         const supersedeMatch = /^\/v1\/memories\/([^/]+)\/supersede$/.exec(url.pathname);
-        if (request.method === "POST" && supersedeMatch?.[1]) return json(memoryView(await supersede(vespaFetch, env, dependencies.now, decodeURIComponent(supersedeMatch[1]), await requestJson(request))));
+        if (request.method === "POST" && supersedeMatch?.[1]) {
+          requireRole(authorization, "contributor");
+          return json(memoryView(await supersede(vespaFetch, env, dependencies.now, decodeURIComponent(supersedeMatch[1]), await requestJson(request))));
+        }
         return error(404, "not_found", "Route not found.");
       } catch (caught) {
-        if (caught instanceof RequestProblem) return error(caught.status, caught.code, caught.message);
+        if (caught instanceof RequestProblem) {
+          const headers = caught.status === 401 ? { "www-authenticate": `Bearer resource_metadata=\"${mcpProtectedResourceMetadataUrl(url)}\"` } : undefined;
+          return error(caught.status, caught.code, caught.message, headers);
+        }
         return error(500, "internal_error", "Unexpected server error.");
       }
     },
