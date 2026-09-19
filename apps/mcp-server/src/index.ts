@@ -33,6 +33,14 @@ function buildServer(): McpServer {
     description: "Mark an existing memory superseded by an already-created active successor in the same scope.",
     inputSchema: z.object({ memory_id: z.string().min(1), expected_revision: z.number().int().positive(), successor_memory_id: z.string().min(1) }),
   }, async ({ memory_id, expected_revision, successor_memory_id }) => textResult(await client.supersede(memory_id, { expected_revision, successor_memory_id })));
+  server.registerTool("withdraw_memory", {
+    description: "Curator-only: remove an active memory from normal recall without deleting its historical record.",
+    inputSchema: z.object({ memory_id: z.string().min(1), expected_revision: z.number().int().positive() }),
+  }, async ({ memory_id, expected_revision }) => textResult(await client.withdrawMemory(memory_id, { expected_revision })));
+  server.registerTool("restore_memory", {
+    description: "Curator-only: return a previously withdrawn memory to active normal recall.",
+    inputSchema: z.object({ memory_id: z.string().min(1), expected_revision: z.number().int().positive() }),
+  }, async ({ memory_id, expected_revision }) => textResult(await client.restoreMemory(memory_id, { expected_revision })));
   server.registerTool("search_documents", {
     description: "Search indexed repository specifications and return labelled excerpts with authoritative source paths and revisions.",
     inputSchema: z.object({ query: z.string().min(1).max(1000), scope_id: z.string().min(1), limit: z.number().int().min(1).max(20).optional() }),

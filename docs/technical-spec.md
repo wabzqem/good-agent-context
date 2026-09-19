@@ -236,7 +236,7 @@ Initial namespace roles are:
 
 Capability-private deployments may grant roles at a scope subtree rather than the entire namespace.
 
-The Phase 3 route matrix is deliberately small: `reader` can recall, inspect a memory, and search reference documents; `contributor` additionally remembers, marks useful, supersedes, and syncs allowlisted reference documents. Curator-only routes will be added with withdrawal, restoration, and scope administration; until then a curator is a contributor with a reserved elevation path.
+The route matrix is deliberately small: `reader` can recall, inspect a memory, and search reference documents; `contributor` additionally remembers, marks useful, supersedes, and syncs allowlisted reference documents; `curator` additionally withdraws and restores memories. Scope administration remains deferred.
 
 ### 6.7 Worker-derived authorization context
 
@@ -382,7 +382,16 @@ POST /v1/memories/{memory_id}/supersede
 
 The request contains the expected current revision and the ID of an already-created active successor memory. After checking that revision and successor, the Worker updates the current memory to `superseded`, sets `superseded_by`, and increments its revision. The previous content remains as clearly labelled historical context; no separate revision archive is stored. A retry after the intended update returns the existing state. This release deliberately accepts the rare race in which independent callers supersede the same memory concurrently: both may receive success and the later update determines `superseded_by`. Strict Vespa test-and-set and multi-memory workflow orchestration are deferred.
 
-### 8.5 Inspect
+### 8.5 Withdraw and restore
+
+```http
+POST /v1/memories/{memory_id}/withdraw
+POST /v1/memories/{memory_id}/restore
+```
+
+Both requests contain `expected_revision` and require the `curator` role. Withdrawal applies only to an active memory and changes its status to `withdrawn`; the document remains available for inspection but is excluded from normal recall. Restoration applies only to a withdrawn memory and returns it to `active`. Superseded memories cannot be withdrawn or restored through these endpoints, preserving their historical relationship to their successor.
+
+### 8.6 Inspect
 
 ```http
 GET /v1/memories/{memory_id}
@@ -390,7 +399,7 @@ GET /v1/memories/{memory_id}
 
 The endpoint returns the current memory state, including its revision and any supersession pointer. Phase 1 does not retain a separate revision-history archive.
 
-### 8.6 Search reference documents
+### 8.7 Search reference documents
 
 ```http
 POST /v1/documents/search
@@ -416,7 +425,7 @@ Superseded documents are excluded by default but may be requested explicitly. Th
 
 Curators may call `PATCH /v1/documents/{document_id}/metadata` to update lifecycle state, the supersession pointer, and guidance notes using `expected_metadata_revision`. This operation cannot change source text, path, revision, hash, or source-derived status.
 
-### 8.7 Reference document ingestion
+### 8.8 Reference document ingestion
 
 `good-context documents sync` reads only the committed `documents` configuration, chunks Markdown by headings with a bounded-size fallback, computes a content hash, and idempotently upserts documents through a fixed contributor API. The stable document ID is derived from repository ID plus source path; renames are explicit lifecycle changes rather than silently creating authority.
 
@@ -432,7 +441,9 @@ The stdio and future remote MCP adapters remain thin translations over the HTTP 
 | `search_documents` | Explicitly search specifications/documents with kind and lifecycle filters. |
 | `remember` | Create a durable memory; never creates a reference document. |
 | `mark_useful` | Record usefulness for a memory only. |
-| `supersede_memory` | Replace or withdraw durable memory content. |
+| `supersede_memory` | Replace a durable memory with an active successor. |
+| `withdraw_memory` | Curator-only: remove an active memory from normal recall without deleting it. |
+| `restore_memory` | Curator-only: return a withdrawn memory to active normal recall. |
 
 The adapter never selects Vespa schemas, constructs YQL, chunks documents, or calculates embeddings.
 
@@ -710,9 +721,15 @@ To supersede memory `A` with already-active successor `B`:
 
 The first release intentionally retains no separate revision archive. The superseded memory itself remains available only as heavily down-ranked, clearly labelled historical context; withdrawn memories are excluded from recall.
 
+### 11.5 Withdrawal and restoration
+
+1. Authenticate curator permission and read the target memory at revision `n`.
+2. To withdraw, require `active` status and update it to `withdrawn` with revision `n + 1`; to restore, require `withdrawn` status and update it to `active` with revision `n + 1`.
+3. An already-completed identical request returns the current state. Superseded memories are deliberately not eligible for either transition. As with supersession, the initial release accepts a rare concurrent lifecycle race as last-writer-wins rather than adding strict test-and-set enforcement.
+
 Cross-memory synthesis may later mark several source memories as superseded by a new memory. That is a multi-document saga and may justify a Cloudflare Workflow with a deterministic operation ID, retries, and repair from Vespa state. Workflow state would improve orchestration but would not be authoritative.
 
-### 11.5 Reference document sync
+### 11.6 Reference document sync
 
 1. Require contributor permission, a clean committed source revision, a configured document root, and an authorized scope.
 2. Parse supported Markdown and recognised frontmatter; reject oversized, binary, generated, escaping, or secret-bearing files.

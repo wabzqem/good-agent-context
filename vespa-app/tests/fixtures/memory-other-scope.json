@@ -1,0 +1,24 @@
+{
+  "fields": {
+    "memory_id": "mem-ledger-boundary",
+    "revision": 1,
+    "namespace_id": "acme",
+    "scope_id": "capability:ledger",
+    "scope_kind": "capability",
+    "kind": "architecture",
+    "title": "Ledger gateway owns reconciliation access",
+    "body": "The ledger capability exposes reconciliation through its gateway and never grants clients direct storage access.",
+    "tags": ["ledger", "gateway"],
+    "repository_id": "platform/ledger",
+    "source_paths": ["services/ledger/src/gateway.ts"],
+    "source_commit": "example-commit",
+    "created_at": 1770000000,
+    "updated_at": 1770000000,
+    "status": "active",
+    "supersedes_ids": [],
+    "derived_from_memory_ids": [],
+    "useful_count": 0,
+    "last_useful_at": 0,
+    "content_hash": "sha256:ledger-boundary"
+  }
+}

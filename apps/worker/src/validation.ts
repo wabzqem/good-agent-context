@@ -1,4 +1,4 @@
-import type { CreateMemoryRequest, SearchDocumentsRequest, SupersedeRequest } from "@good-agent-context/contracts";
+import type { CreateMemoryRequest, MemoryLifecycleRequest, SearchDocumentsRequest, SupersedeRequest } from "@good-agent-context/contracts";
 
 export class RequestProblem extends Error {
   constructor(
@@ -85,11 +85,17 @@ export function parseSearch(value: unknown): SearchDocumentsRequest {
   return { query: requiredString(value.query, "query", 1_000), scope_id: scopedId(value.scope_id), limit };
 }
 
-export function parseSupersede(value: unknown): SupersedeRequest {
+export function parseMemoryLifecycle(value: unknown): MemoryLifecycleRequest {
   if (!isRecord(value)) throw new RequestProblem(400, "invalid_request", "Request body must be an object.");
   const expected = Number(value.expected_revision);
   if (!Number.isInteger(expected) || expected < 1) {
     throw new RequestProblem(400, "invalid_request", "expected_revision must be a positive integer.");
   }
-  return { expected_revision: expected, successor_memory_id: requiredString(value.successor_memory_id, "successor_memory_id", 128) };
+  return { expected_revision: expected };
+}
+
+export function parseSupersede(value: unknown): SupersedeRequest {
+  const request = parseMemoryLifecycle(value);
+  if (!isRecord(value)) throw new RequestProblem(400, "invalid_request", "Request body must be an object.");
+  return { ...request, successor_memory_id: requiredString(value.successor_memory_id, "successor_memory_id", 128) };
 }

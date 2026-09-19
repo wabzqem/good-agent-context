@@ -83,6 +83,10 @@ export interface SupersedeRequest {
   successor_memory_id: string;
 }
 
+export interface MemoryLifecycleRequest {
+  expected_revision: number;
+}
+
 export interface ReferenceDocument {
   document_id: string;
   namespace_id: string;

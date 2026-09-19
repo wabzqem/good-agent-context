@@ -22,6 +22,7 @@ feed memory mem-auth-boundary memory-auth-boundary.json
 feed memory mem-payment-idempotency memory-idempotency.json
 feed memory mem-retired-direct-vespa memory-superseded.json
 feed memory mem-other-tenant memory-other-tenant.json
+feed memory mem-ledger-boundary memory-other-scope.json
 feed reference_document doc-payment-retries-v3 reference-payment-retries.json
 feed reference_document doc-payment-retries-v2 reference-superseded.json
 

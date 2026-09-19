@@ -193,6 +193,33 @@ describe("Good Agent Context Worker", () => {
     expect(vespa.requests.every((entry) => !entry.url.pathname.includes("memory_revision") && !entry.url.pathname.includes("memory_usefulness"))).toBe(true);
   });
 
+  it("allows only curators to withdraw and restore active memories", async () => {
+    const vespa = fakeVespa({ active: memory("active"), historical: memory("historical", { status: "superseded", superseded_by: "active", revision: 2 }) });
+    const worker = createWorker({ fetch: vespa.fetch, now: () => 1_770_000_000_000 });
+    const contributorAttempt = await worker.fetch(request("/v1/memories/active/withdraw", "POST", { expected_revision: 1 }), env);
+    expect(contributorAttempt.status).toBe(403);
+
+    const curatorEnv = { ...env, DEVELOPMENT_AUTH_ROLE: "curator" as const };
+    const withdrawn = await worker.fetch(request("/v1/memories/active/withdraw", "POST", { expected_revision: 1 }), curatorEnv);
+    expect(withdrawn.status).toBe(200);
+    await expect(withdrawn.json()).resolves.toMatchObject({ memory_id: "active", status: "withdrawn", revision: 2 });
+    expect(vespa.records.get("active")).toMatchObject({ status: "withdrawn", revision: 2 });
+
+    const recalledWhileWithdrawn = await worker.fetch(request("/v1/recall", "POST", { query: "gateway", scope_id: "capability:payments" }), curatorEnv);
+    const recalledBody = await recalledWhileWithdrawn.json() as { memories: Array<{ memory_id: string }>; scope_ids: string[] };
+    expect(recalledBody.scope_ids).toEqual(["capability:payments"]);
+    expect(recalledBody.memories.map((entry) => entry.memory_id)).not.toContain("active");
+
+    const restored = await worker.fetch(request("/v1/memories/active/restore", "POST", { expected_revision: 2 }), curatorEnv);
+    expect(restored.status).toBe(200);
+    await expect(restored.json()).resolves.toMatchObject({ memory_id: "active", status: "active", revision: 3 });
+
+    const withdrawSuperseded = await worker.fetch(request("/v1/memories/historical/withdraw", "POST", { expected_revision: 2 }), curatorEnv);
+    expect(withdrawSuperseded.status).toBe(422);
+    const restoreSuperseded = await worker.fetch(request("/v1/memories/historical/restore", "POST", { expected_revision: 2 }), curatorEnv);
+    expect(restoreSuperseded.status).toBe(422);
+  });
+
   it("returns only source-of-truth context for reference-document search", async () => {
     const vespa = fakeVespa({
       "ref-api": {

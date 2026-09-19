@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "k": 10,
+  "profiles": ["recall-lexical", "recall-semantic", "recall"],
+  "cases": [
+    {
+      "id": "gateway-keywords",
+      "query": "tenant isolation gateway credentials",
+      "scope_id": "capability:payments",
+      "relevant": [{ "memory_id": "mem-auth-boundary", "grade": 3 }],
+      "forbidden_ids": ["mem-other-tenant", "mem-ledger-boundary"]
+    },
+    {
+      "id": "gateway-paraphrase",
+      "query": "which layer stops coding agents from talking to the search store",
+      "scope_id": "capability:payments",
+      "relevant": [{ "memory_id": "mem-auth-boundary", "grade": 3 }],
+      "forbidden_ids": ["mem-other-tenant", "mem-ledger-boundary"]
+    },
+    {
+      "id": "idempotency-keywords",
+      "query": "same idempotency key retry",
+      "scope_id": "capability:payments",
+      "relevant": [{ "memory_id": "mem-payment-idempotency", "grade": 3 }],
+      "forbidden_ids": ["mem-other-tenant", "mem-ledger-boundary"]
+    },
+    {
+      "id": "idempotency-paraphrase",
+      "query": "how should a failed charge preserve its deduplication identifier",
+      "scope_id": "capability:payments",
+      "relevant": [{ "memory_id": "mem-payment-idempotency", "grade": 3 }],
+      "forbidden_ids": ["mem-other-tenant", "mem-ledger-boundary"]
+    },
+    {
+      "id": "current-over-obsolete",
+      "query": "can agent clients call Vespa directly",
+      "scope_id": "capability:payments",
+      "relevant": [
+        { "memory_id": "mem-auth-boundary", "grade": 3 },
+        { "memory_id": "mem-retired-direct-vespa", "grade": 1 }
+      ],
+      "forbidden_ids": ["mem-other-tenant", "mem-ledger-boundary"]
+    }
+  ],
+  "superseded_checks": [
+    {
+      "profile": "recall",
+      "query": "where is agent request authentication enforced",
+      "scope_id": "capability:payments",
+      "active_id": "mem-auth-boundary",
+      "superseded_id": "mem-retired-direct-vespa",
+      "max_relevance_ratio": 0.05
+    }
+  ]
+}

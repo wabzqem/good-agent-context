@@ -77,7 +77,7 @@ Use the local stdio command in an MCP client configuration:
 
 Run `good-context auth login` first in a normal terminal. The MCP process reuses the Keychain credential and refreshes opaque Access tokens as needed. For local development, set both `GOOD_CONTEXT_URL=http://127.0.0.1:8787` and the local-only `GOOD_CONTEXT_TOKEN` instead.
 
-It exposes `recall`, `remember`, `mark_useful`, `supersede_memory`, and `search_documents`. `remember` returns up to three scoped active-memory duplicate suggestions. Document search results are explicitly non-authoritative references and include the repository source path/revision.
+It exposes `recall`, `remember`, `mark_useful`, `supersede_memory`, `withdraw_memory`, `restore_memory`, and `search_documents`. Withdrawal and restoration are curator-only operations. `remember` returns up to three scoped active-memory duplicate suggestions. Document search results are explicitly non-authoritative references and include the repository source path/revision.
 
 The Worker also publishes OAuth Protected Resource Metadata at `/.well-known/oauth-protected-resource/mcp` for the planned remote `/mcp` transport. The currently supported MCP transport remains local stdio.
 

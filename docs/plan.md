@@ -137,7 +137,7 @@ Deliverables:
 - Bind an outbound mTLS certificate to the Worker for Vespa Cloud access.
 - Implement current MCP HTTP authorization discovery for a future remote MCP endpoint.
 
-Operator configuration: create a Cloudflare Access `Service Auth` policy for each CI token, map its client ID to a role in `SERVICE_TOKEN_ROLES_JSON`, and, when curator operations are introduced, configure `CURATOR_ACCESS_AUD` for a separately protected Access application. These values are deployment configuration; token secrets never enter Worker variables or the repository.
+Operator configuration: create a Cloudflare Access `Service Auth` policy for each CI token, map its client ID to a role in `SERVICE_TOKEN_ROLES_JSON`, and configure `CURATOR_ACCESS_AUD` for the separately protected Access application before granting hosted withdrawal and restoration access. These values are deployment configuration; token secrets never enter Worker variables or the repository.
 
 Acceptance criteria:
 
@@ -155,6 +155,7 @@ Deliverables:
 - Keep the current memory as an authoritative Vespa document with an application-level revision check.
 - Record usefulness as an aggregate counter and latest-use timestamp on the current memory document.
 - Implement single-memory supersession with an active successor, a supersession pointer, and historical retrieval treatment.
+- Let curators withdraw an active memory from normal recall and restore it to active when appropriate.
 - Reject likely personal, secret, session-specific, temporary, and incomplete content.
 - Add duplicate detection within the requested logical scope.
 
@@ -162,10 +163,13 @@ Acceptance criteria:
 
 - Retrying a request does not create duplicate memories.
 - Superseded memories are clearly labelled and rank substantially below comparable active memories; withdrawn memories never appear in normal recall.
+- Only curators can withdraw or restore memories; a withdrawn memory is retained but excluded from normal recall.
 - A retry of an already-completed identical supersession returns its existing state; rare competing supersessions are accepted as last-writer-wins in this release.
 - Memory documents contain no authentication principal or session identifier.
 
 ### Phase 5: Relevance evaluation
+
+Implementation status: an initial local memory-evaluation harness and judged seed set are implemented. It reports the metrics and enforces safety regressions, but the corpus is intentionally too small to make a meaningful hybrid-superiority claim. Grow it from real coding tasks before tuning weights or adding a performance gate.
 
 Deliverables:
 

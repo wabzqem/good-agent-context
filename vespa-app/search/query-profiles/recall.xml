@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <query-profile id="recall" type="root">
-    <field name="hits" overridable="false">8</field>
+    <field name="hits" overridable="false">10</field>
     <field name="maxHits" overridable="false">100</field>
     <field name="timeout" overridable="false">1.0</field>
     <field name="model.restrict" overridable="false">memory</field>

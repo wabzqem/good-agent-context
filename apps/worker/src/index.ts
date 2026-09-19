@@ -2,6 +2,7 @@ import type {
   ApiErrorBody,
   CreateMemoryRequest,
   Memory,
+  MemoryLifecycleRequest,
   MemoryResult,
   MemoryView,
   RecallResponse,
@@ -11,7 +12,7 @@ import type {
   SearchDocumentsResponse,
 } from "@good-agent-context/contracts";
 import { createRemoteJWKSet, jwtVerify, type JWTPayload } from "jose";
-import { RequestProblem, isRecord, parseCreateMemory, parseSearch, parseSupersede, requiredString, scopedId } from "./validation";
+import { RequestProblem, isRecord, parseCreateMemory, parseMemoryLifecycle, parseSearch, parseSupersede, requiredString, scopedId } from "./validation";
 
 export type NamespaceRole = "reader" | "contributor" | "curator";
 
@@ -475,6 +476,40 @@ async function supersede(fetchImpl: FetchLike, env: Env, now: () => number, memo
   return { ...current, status: "superseded", superseded_by: successor.memory_id, revision: current.revision + 1, updated_at: currentSeconds(now) };
 }
 
+async function transitionMemory(
+  fetchImpl: FetchLike,
+  env: Env,
+  now: () => number,
+  memoryId: string,
+  body: unknown,
+  transition: "withdraw" | "restore",
+): Promise<Memory> {
+  const request: MemoryLifecycleRequest = parseMemoryLifecycle(body);
+  const current = await getMemory(fetchImpl, env, memoryId);
+  const from = transition === "withdraw" ? "active" : "withdrawn";
+  const to = transition === "withdraw" ? "withdrawn" : "active";
+  if (current.status === to) return current;
+  if (current.status !== from) {
+    const verb = transition === "withdraw" ? "withdrawn" : "restored";
+    throw new RequestProblem(422, "invalid_lifecycle_transition", `Only ${from} memories can be ${verb}.`);
+  }
+  if (current.revision !== request.expected_revision) {
+    throw new RequestProblem(409, "revision_conflict", "Memory changed before its lifecycle state could be updated.");
+  }
+  const timestamp = currentSeconds(now);
+  const response = await vespaJson(fetchImpl, documentUrl(env, "memory", memoryId), {
+    method: "PUT",
+    headers: jsonHeaders,
+    body: JSON.stringify({ fields: {
+      status: { assign: to },
+      updated_at: { assign: timestamp },
+      revision: { assign: current.revision + 1 },
+    } }),
+  });
+  if (response.status < 200 || response.status >= 300) throw new RequestProblem(502, "vespa_write_failed", `Vespa could not ${transition} the memory.`);
+  return { ...current, status: to, revision: current.revision + 1, updated_at: timestamp };
+}
+
 async function syncDocuments(fetchImpl: FetchLike, env: Env, now: () => number, body: unknown): Promise<{ indexed: Array<{ document_id: string; source_path: string }> }> {
   if (!isRecord(body) || !Array.isArray(body.documents) || body.documents.length > 100) {
     throw new RequestProblem(400, "invalid_request", "documents must contain at most 100 reference documents.");
@@ -581,6 +616,16 @@ export function createWorker(overrides: Partial<Dependencies> = {}) {
         if (request.method === "POST" && supersedeMatch?.[1]) {
           requireRole(authorization, "contributor");
           return json(memoryView(await supersede(vespaFetch, env, dependencies.now, decodeURIComponent(supersedeMatch[1]), await requestJson(request))));
+        }
+        const withdrawMatch = /^\/v1\/memories\/([^/]+)\/withdraw$/.exec(url.pathname);
+        if (request.method === "POST" && withdrawMatch?.[1]) {
+          requireRole(authorization, "curator");
+          return json(memoryView(await transitionMemory(vespaFetch, env, dependencies.now, decodeURIComponent(withdrawMatch[1]), await requestJson(request), "withdraw")));
+        }
+        const restoreMatch = /^\/v1\/memories\/([^/]+)\/restore$/.exec(url.pathname);
+        if (request.method === "POST" && restoreMatch?.[1]) {
+          requireRole(authorization, "curator");
+          return json(memoryView(await transitionMemory(vespaFetch, env, dependencies.now, decodeURIComponent(restoreMatch[1]), await requestJson(request), "restore")));
         }
         return error(404, "not_found", "Route not found.");
       } catch (caught) {

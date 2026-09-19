@@ -2,6 +2,7 @@ import type {
   ApiErrorBody,
   CreateMemoryRequest,
   MarkUsefulResponse,
+  MemoryLifecycleRequest,
   MemoryView,
   RecallRequest,
   RecallResponse,
@@ -63,6 +64,14 @@ export class GoodContextClient {
 
   async supersede(memoryId: string, request: SupersedeRequest): Promise<MemoryView> {
     return this.request(`/v1/memories/${encodeURIComponent(memoryId)}/supersede`, "POST", request);
+  }
+
+  async withdrawMemory(memoryId: string, request: MemoryLifecycleRequest): Promise<MemoryView> {
+    return this.request(`/v1/memories/${encodeURIComponent(memoryId)}/withdraw`, "POST", request);
+  }
+
+  async restoreMemory(memoryId: string, request: MemoryLifecycleRequest): Promise<MemoryView> {
+    return this.request(`/v1/memories/${encodeURIComponent(memoryId)}/restore`, "POST", request);
   }
 
   async searchDocuments(request: SearchDocumentsRequest): Promise<SearchDocumentsResponse> {

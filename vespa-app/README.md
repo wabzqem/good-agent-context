@@ -34,9 +34,16 @@ Or run the individual stages:
 ./scripts/query-local.sh recall-lexical 'tenant isolation gateway credentials'
 ./scripts/query-local.sh recall-semantic 'which layer stops coding agents from talking to the search store'
 ./scripts/query-local.sh documents 'how should a charge retry use an idempotency key'
+node ./scripts/evaluate-relevance.mjs
 ```
 
 The test calls the local Vespa HTTP API only. It is a package test, not the product's public API contract; clients must never receive the ability to submit these requests directly in production.
+
+## Relevance evaluation
+
+`scripts/evaluate-relevance.mjs` executes the judged memory cases in `tests/relevance/memory-cases.json` against the lexical, semantic, and hybrid profiles. It reports Recall@10, nDCG@10, mean/p95 request latency, returned IDs per case, and hard checks for scope leakage, forbidden-memory leakage, and superseded-memory prominence. `test-phase1.sh` runs it after feeding fixtures.
+
+The seed corpus is intentionally small: its report is a reproducible baseline, not evidence that hybrid retrieval is already superior. Add a judged case whenever a real coding task exposes a retrieval failure or useful distinction before changing ranking weights.
 
 ## Design notes
 

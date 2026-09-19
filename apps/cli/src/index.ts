@@ -20,6 +20,8 @@ function usage(): never {
   good-context get <memory-id>
   good-context useful <memory-id>
   good-context supersede <memory-id> <expected-revision> <successor-memory-id>
+  good-context withdraw <memory-id> <expected-revision>
+  good-context restore <memory-id> <expected-revision>
   good-context documents search <query> [scope]
   good-context documents sync [config-path]
   good-context auth login`);
@@ -118,6 +120,14 @@ async function main(): Promise<void> {
   if (command === "useful" && args.length === 1) { print(await client.markUseful(args[0]!)); return; }
   if (command === "supersede" && args.length === 3) {
     print(await client.supersede(args[0]!, { expected_revision: Number(args[1]), successor_memory_id: args[2]! }));
+    return;
+  }
+  if (command === "withdraw" && args.length === 2) {
+    print(await client.withdrawMemory(args[0]!, { expected_revision: Number(args[1]) }));
+    return;
+  }
+  if (command === "restore" && args.length === 2) {
+    print(await client.restoreMemory(args[0]!, { expected_revision: Number(args[1]) }));
     return;
   }
   if (command === "documents" && args[0] === "search" && args.length >= 2) {
