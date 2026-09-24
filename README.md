@@ -1,74 +1,65 @@
 # Good Agent Context
 
-Shared, durable context for coding agents. The system stores useful facts about systems rather than people, sessions, TODOs, or incomplete work.
+Good Agent Context is shared, searchable knowledge for coding agents. An agent can recall architecture and implementation facts relevant to the codebase it is working in, record a verified finding for future work, and search indexed repository specifications with links back to their source files. Memories persist across agent sessions and are ranked with lexical and semantic search.
 
-The public surface is a Cloudflare Worker domain API. CLI and MCP clients never receive Vespa credentials and never construct YQL. Vespa remains the sole product datastore and search engine.
+Each repository describes its logical scopes in `.good-agent-context.yaml`. The CLI or local MCP server resolves the current project path to a scope; the API searches that scope, its synced ancestors, and the repository scope. Memories have lifecycle states, so updated facts can point to a successor and withdrawn facts leave normal recall. Repository specifications are indexed as a separate reference search with source paths and revisions.
+
+The CLI and MCP adapter call a Cloudflare Worker domain API. The Worker validates operations, applies the configured namespace and roles, resolves the scope ladder, and reads or writes Vespa. Vespa stores memories, scope metadata, and the searchable copies of reference documents. Hosted access uses Cloudflare Access and a Worker-to-Vespa mTLS binding; local development runs the same API against Vespa in Docker.
 
 ## Local development
 
-First start and validate Vespa:
-
-```bash
-cd vespa-app
-./scripts/test-phase1.sh
-cd ..
-```
-
-To redeploy to an already-running local Vespa without feeding test fixtures, run `./vespa-app/scripts/deploy-local.sh` from the repository root. Do not use `vespa deploy --target=local` against `vespa-app` directly: its default `services.xml` uses a Vespa Cloud-only model ID. The local script substitutes `services.local.xml` with a model URL.
-
-Install JavaScript dependencies and configure the local Worker:
+Install dependencies, start Vespa, and deploy its Docker-compatible application package:
 
 ```bash
 npm install
-cp apps/worker/.dev.vars.example apps/worker/.dev.vars
-# Replace REFERENCE_SOURCES_JSON in apps/worker/.dev.vars.
+./vespa-app/scripts/start-local.sh
+./vespa-app/scripts/deploy-local.sh
 npm run dev:worker
 ```
 
-In a second terminal, sync this repository's scope graph, then use the CLI against the Worker:
+The Worker reads the `local` environment in `apps/worker/wrangler.jsonc` and normally listens at `http://127.0.0.1:8787`. The Vespa scripts publish their ports on loopback. `deploy-local.sh` selects `services.local.xml`, which supplies the E5 model URLs for Docker; the default `services.xml` uses Vespa Cloud's managed model ID. `apps/worker/.dev.vars.example` shows the values used by a customized local setup.
+
+In another terminal, sync this repository's scope graph and specifications, then search them:
 
 ```bash
 export GOOD_CONTEXT_URL=http://127.0.0.1:8787
-
 npm run dev:cli -- scopes sync
-npm run dev:cli -- recall 'where is request authentication enforced'
-npm run dev:cli -- documents search 'where is the scope model documented'
+npm run dev:cli -- documents sync
+npm run dev:cli -- documents search 'how are scopes resolved?'
 ```
 
-Each project needs a `.good-agent-context.yaml` at its repository root. Set a stable `repository:` ID, declare scopes with `parents:`, and add path bindings. Exactly one `root: .` binding supplies the fallback; it may point to the repository scope if there is no known capability. The most specific path binding selects the active scope, while recall also includes its synced ancestors and the repository scope. See `.good-agent-context.example.yaml` for a multi-scope example. Run `good-context scopes sync` after changing this file; scope sync requires the curator role. The local Worker profile grants that role. An unsynced scope returns `scope_not_synced` instead of searching an incomplete ladder.
+As agents record findings, `npm run dev:cli -- recall 'how does the Worker reach Vespa?'` retrieves matching memories. `remember`, `useful`, `supersede`, `withdraw`, and `restore` provide the rest of the CLI memory workflow.
 
-To sync repository specifications, configure the `documents:` section and make the Worker `REFERENCE_SOURCES_JSON` entry match the repository, scope, and allowed source-path prefix. Then run:
+The loopback client and local Worker use trusted local requests without Access authentication. For a different repository, run `scopes sync` from that repository after adding its `.good-agent-context.yaml`; configure the Worker's `REFERENCE_SOURCES_JSON` allowlist for that repository before syncing its documents.
+
+## Repository scopes and documents
+
+A project config declares a stable `repository:` ID, logical scopes with `parents:`, and path bindings. Exactly one `root: .` binding supplies the fallback. It can point to the repository scope when the project has no capability scope. More specific paths select narrower scopes such as a service. See [the example configuration](.good-agent-context.example.yaml).
+
+After changing scope definitions or parent links, run `good-context scopes sync` as a curator. Path-binding changes take effect when the client next reads the config. The Worker stores the repository node and parent links in Vespa. Recall and document search then use the requested scope's ancestor ladder plus the repository scope.
+
+To index repository specifications, declare `documents:` in the project config, allow the repository/scope/path prefix in the Worker's `REFERENCE_SOURCES_JSON`, then run:
 
 ```bash
 npm run dev:cli -- documents sync
 ```
 
-When `GOOD_CONTEXT_URL` is a loopback URL, the client sends no authentication headers and does not attempt Access login. The matching `LOCAL_DEVELOPMENT=true` Worker profile uses local Docker Vespa without mTLS and accepts these trusted local requests without authentication. Keep both services bound to loopback or a private Docker network. The deployed Worker remains protected by Cloudflare Access and independently verifies the signed `Cf-Access-Jwt-Assertion` against Cloudflare's public signing keys, expected issuer, and application audience. Never put a Vespa credential in an agent configuration.
+Document results include the repository path and source revision so an agent can open the current source before relying on precise wording.
 
-For the hosted API, use browser login once; the CLI registers a public PKCE client dynamically and stores its refresh credentials in the macOS Keychain:
+## Hosted access
+
+`GOOD_CONTEXT_URL` defaults to `https://gac.wabz.net`. Interactive CLI access uses a Cloudflare Access browser login with PKCE; on macOS, refresh credentials are stored in Keychain:
 
 ```bash
 npm run dev:cli -- auth login
-npm run dev:cli -- recall 'where is request authentication enforced'
+npm run dev:cli -- recall 'how does the Worker reach Vespa?'
 ```
 
-`GOOD_CONTEXT_URL` defaults to `https://gac.wabz.net`; non-loopback URLs use Cloudflare Access.
-
-### CI and unattended agents
-
-Create a Cloudflare Access service token and admit it to the Worker Access application with a `Service Auth` policy. Store its client ID and secret in the CI secret manager, then configure the Worker with a role mapping for that client ID. The client never sends these credentials to Vespa:
-
-```bash
-export GOOD_CONTEXT_SERVICE_TOKEN_ID=your-cloudflare-service-token-client-id
-export GOOD_CONTEXT_SERVICE_TOKEN_SECRET=your-cloudflare-service-token-secret
-npm run dev:cli -- documents sync
-```
-
-The Worker accepts only service-token client IDs listed in its `SERVICE_TOKEN_ROLES_JSON` variable, for example `{"your-cloudflare-service-token-client-id":"contributor"}`. Do not commit a token secret. A service token takes precedence over `GOOD_CONTEXT_TOKEN` when both are present.
+For CI and unattended agents, configure a Cloudflare Access service token in the workload's credential store and map its client ID to a Worker role through `SERVICE_TOKEN_ROLES_JSON`. The shared client reads `GOOD_CONTEXT_SERVICE_TOKEN_ID` and `GOOD_CONTEXT_SERVICE_TOKEN_SECRET`; a configured service token takes precedence over an interactive bearer token. Vespa credentials stay with the Worker.
 
 ## MCP
 
-Use the local stdio command in an MCP client configuration:
+The MCP adapter runs over local stdio. For a multi-project MCP host, pass the current project's absolute `project_path` to `recall`, `remember`, and `search_documents`. A server dedicated to one project can set `GOOD_CONTEXT_PROJECT_ROOT`. An optional `scope_id` selects another scope declared by that project's config.
 
 ```json
 {
@@ -79,19 +70,14 @@ Use the local stdio command in an MCP client configuration:
 }
 ```
 
-Run `good-context auth login` first in a normal terminal. The MCP process reuses the Keychain credential and refreshes opaque Access tokens as needed. For local development, set `GOOD_CONTEXT_URL=http://127.0.0.1:8787`; no local token is needed.
+The adapter exposes `recall`, `remember`, `mark_useful`, `supersede_memory`, `withdraw_memory`, `restore_memory`, and `search_documents`. Hosted MCP reuses the CLI's Access login; local MCP can use `GOOD_CONTEXT_URL=http://127.0.0.1:8787`. The Worker publishes OAuth Protected Resource Metadata for a future remote MCP transport.
 
-For `recall`, `remember`, and `search_documents`, pass the current project's absolute `project_path`. The MCP server resolves that project's own configuration for each call. A server dedicated to one project may set `GOOD_CONTEXT_PROJECT_ROOT` instead. `scope_id` is optional and overrides the path binding when it names a scope declared by that repository. MCP does not use its own process directory as a project fallback.
-
-It exposes `recall`, `remember`, `mark_useful`, `supersede_memory`, `withdraw_memory`, `restore_memory`, and `search_documents`. Withdrawal and restoration are curator-only operations. `remember` returns up to three scoped active-memory duplicate suggestions. Document search results are explicitly non-authoritative references and include the repository source path/revision.
-
-The Worker also publishes OAuth Protected Resource Metadata at `/.well-known/oauth-protected-resource/mcp` for the planned remote `/mcp` transport. The currently supported MCP transport remains local stdio.
-
-## Verification
+## Verification and design
 
 ```bash
 npm run typecheck
 npm test
+./vespa-app/scripts/test-phase1.sh
 ```
 
-See [the delivery plan](docs/plan.md) and [technical specification](docs/technical-spec.md) for the staged architecture.
+`test-phase1.sh` deploys Vespa, feeds test fixtures, and runs the local relevance evaluation. See [the technical architecture](docs/technical-spec.md) for current behavior and [the delivery plan](docs/plan.md) for the next milestones.
