@@ -1,8 +1,17 @@
 version: 1
 repository: repository:platform-monorepo
-default_scope: capability:payments
+
+scopes:
+  - id: organisation:acme
+    parents: []
+  - id: capability:payments
+    parents: [organisation:acme]
+  - id: service:ledger
+    parents: [capability:payments]
 
 bindings:
+  - root: .
+    scope: capability:payments
   - root: services/ledger
     scope: service:ledger
 

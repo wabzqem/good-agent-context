@@ -10,9 +10,11 @@ import type {
   ReferenceDocument,
   ReferenceDocumentResult,
   SearchDocumentsResponse,
+  SyncScopesRequest,
+  SyncScopesResponse,
 } from "@good-agent-context/contracts";
 import { createRemoteJWKSet, jwtVerify, type JWTPayload } from "jose";
-import { RequestProblem, isRecord, parseCreateMemory, parseMemoryLifecycle, parseSearch, parseSupersede, requiredString, scopedId } from "./validation";
+import { RequestProblem, isRecord, parseCreateMemory, parseMemoryLifecycle, parseSearch, parseSupersede, parseSyncScopes, repositoryId as validateRepositoryId, requiredString, scopedId } from "./validation";
 
 export type NamespaceRole = "reader" | "contributor" | "curator";
 
@@ -289,11 +291,122 @@ function mcpProtectedResourceMetadata(url: URL, env: Env): Response {
   });
 }
 
-function scopeIds(scopeId: string): string[] {
-  // Scope labels are created lazily by memories and reference documents. A
-  // curated scope graph may add ancestor expansion later, but is never an
-  // admission check on the Phase 1/2 request path.
-  return [scopeId];
+function scopeDocumentUrl(env: Env, scopeId: string): URL {
+  return documentUrl(env, "scope", `${env.NAMESPACE_ID}:${scopeId}`);
+}
+
+async function readScope(fetchImpl: FetchLike, env: Env, scopeId: string): Promise<Record<string, unknown> | undefined> {
+  const response = await vespaJson(fetchImpl, scopeDocumentUrl(env, scopeId));
+  if (response.status === 404) return undefined;
+  if (response.status !== 200) throw new RequestProblem(502, "vespa_read_failed", "Vespa could not read scope metadata.");
+  const fields = fieldsFrom(response.body);
+  if (!fields || fields.scope_id !== scopeId || fields.namespace_id !== env.NAMESPACE_ID) {
+    throw new RequestProblem(502, "scope_metadata_invalid", "Vespa returned invalid scope metadata.");
+  }
+  // Vespa omits empty array fields from document GET responses.
+  for (const field of ["parent_ids", "ancestor_ids", "aliases", "repository_ids", "bound_scope_ids"]) {
+    if (fields[field] === undefined) fields[field] = [];
+  }
+  return fields;
+}
+
+async function scopeIds(fetchImpl: FetchLike, env: Env, scopeId: string, repositoryId: string): Promise<string[]> {
+  const result: string[] = [];
+  const visited = new Set<string>();
+  const visiting = new Set<string>();
+  async function visit(id: string): Promise<void> {
+    if (visiting.has(id)) throw new RequestProblem(409, "scope_cycle", "The synced scope graph contains a cycle.");
+    if (visited.has(id)) return;
+    if (visited.size >= 16) throw new RequestProblem(409, "scope_graph_too_large", "The scope closure exceeds 16 scopes.");
+    visiting.add(id);
+    const fields = await readScope(fetchImpl, env, id);
+    if (!fields || fields.status !== "active") throw new RequestProblem(409, "scope_not_synced", `Sync scope ${id} before searching.`);
+    if (!Array.isArray(fields.repository_ids) || !fields.repository_ids.includes(repositoryId)) {
+      throw new RequestProblem(403, "scope_not_in_repository", `Scope ${id} is not bound to ${repositoryId}.`);
+    }
+    if (!Array.isArray(fields.parent_ids) || fields.parent_ids.length > 8 || fields.parent_ids.some((parent) => typeof parent !== "string")) {
+      throw new RequestProblem(502, "scope_metadata_invalid", "Vespa returned invalid scope parents.");
+    }
+    result.push(id);
+    visited.add(id);
+    for (const parent of fields.parent_ids) await visit(parent);
+    visiting.delete(id);
+  }
+  await visit(scopeId);
+  if (scopeId !== repositoryId) await visit(repositoryId);
+  return result;
+}
+
+async function syncScopes(fetchImpl: FetchLike, env: Env, now: () => number, input: SyncScopesRequest): Promise<SyncScopesResponse> {
+  const definitions = [{ scope_id: input.repository_id, parent_ids: [] }, ...input.scopes];
+  const existing = await Promise.all(definitions.map((scope) => readScope(fetchImpl, env, scope.scope_id)));
+  const previouslyBound = existing[0]?.bound_scope_ids ?? [];
+  if (!Array.isArray(previouslyBound) || previouslyBound.some((id) => typeof id !== "string")) {
+    throw new RequestProblem(502, "scope_metadata_invalid", "Vespa returned invalid repository scope bindings.");
+  }
+  const currentIds = new Set(definitions.map((scope) => scope.scope_id));
+  const unbound = previouslyBound.filter((id) => !currentIds.has(id));
+  const stale = await Promise.all(unbound.map((id) => readScope(fetchImpl, env, id)));
+  const byId = new Map(definitions.map((definition) => [definition.scope_id, definition]));
+  function ancestors(id: string, seen = new Set<string>()): string[] {
+    for (const parent of byId.get(id)?.parent_ids ?? []) {
+      seen.add(parent);
+      ancestors(parent, seen);
+    }
+    return [...seen];
+  }
+  for (const [index, definition] of definitions.entries()) {
+    const previous = existing[index];
+    if (!previous) continue;
+    const previousParents = previous.parent_ids;
+    const otherRepositories = Array.isArray(previous.repository_ids)
+      ? previous.repository_ids.filter((id) => id !== input.repository_id)
+      : [];
+    if (!Array.isArray(previousParents) || previousParents.some((id) => typeof id !== "string") ||
+      (otherRepositories.length > 0 && JSON.stringify(previousParents) !== JSON.stringify(definition.parent_ids))) {
+      throw new RequestProblem(409, "scope_graph_conflict", `Scope ${definition.scope_id} has conflicting parent metadata.`);
+    }
+  }
+  const timestamp = currentSeconds(now);
+  async function writeScope(definition: SyncScopesRequest["scopes"][number], previous?: Record<string, unknown>): Promise<void> {
+    const repositories = Array.isArray(previous?.repository_ids)
+      ? previous.repository_ids.filter((id): id is string => typeof id === "string")
+      : [];
+    const fields = {
+      ...previous,
+      scope_id: definition.scope_id,
+      namespace_id: env.NAMESPACE_ID,
+      kind: definition.scope_id.split(":")[0],
+      display_name: definition.scope_id.split(":")[1],
+      parent_ids: definition.parent_ids,
+      ancestor_ids: ancestors(definition.scope_id),
+      aliases: [],
+      repository_ids: [...new Set([...repositories, input.repository_id])],
+      ...(definition.scope_id === input.repository_id ? { bound_scope_ids: input.scopes.map((scope) => scope.scope_id) } : {}),
+      created_at: typeof previous?.created_at === "number" ? previous.created_at : timestamp,
+      updated_at: timestamp,
+      status: "active",
+    };
+    const response = await vespaJson(fetchImpl, scopeDocumentUrl(env, definition.scope_id), {
+      method: "POST", headers: jsonHeaders, body: JSON.stringify({ fields }),
+    });
+    if (response.status < 200 || response.status >= 300) throw new RequestProblem(502, "vespa_write_failed", `Vespa could not sync scope ${definition.scope_id}.`);
+  }
+  for (let index = 1; index < definitions.length; index++) await writeScope(definitions[index]!, existing[index]);
+  for (const [index, id] of unbound.entries()) {
+    const previous = stale[index];
+    if (!previous) continue;
+    const repository_ids = Array.isArray(previous.repository_ids)
+      ? previous.repository_ids.filter((candidate) => typeof candidate === "string" && candidate !== input.repository_id)
+      : [];
+    const response = await vespaJson(fetchImpl, scopeDocumentUrl(env, id), {
+      method: "POST", headers: jsonHeaders,
+      body: JSON.stringify({ fields: { ...previous, repository_ids, status: repository_ids.length > 0 ? "active" : "withdrawn", updated_at: timestamp } }),
+    });
+    if (response.status < 200 || response.status >= 300) throw new RequestProblem(502, "vespa_write_failed", `Vespa could not unbind scope ${id}.`);
+  }
+  await writeScope(definitions[0]!, existing[0]);
+  return { synced: definitions.map((scope) => scope.scope_id), unbound };
 }
 
 async function queryScope(
@@ -423,10 +536,9 @@ async function createMemory(fetchImpl: FetchLike, env: Env, now: () => number, i
 }
 
 async function duplicateCandidates(fetchImpl: FetchLike, env: Env, input: CreateMemoryRequest): Promise<RankedMemoryResult[]> {
-  const scopes = scopeIds(input.scope_id);
   const query = `${input.title}\n${input.body}`;
-  const hits = (await Promise.all(scopes.map((scope) => queryScope(fetchImpl, env, "recall", query, scope))))
-    .flat().map(memoryResult).filter((hit): hit is RankedMemoryResult => hit !== undefined)
+  const hits = (await queryScope(fetchImpl, env, "recall", query, input.scope_id))
+    .map(memoryResult).filter((hit): hit is RankedMemoryResult => hit !== undefined)
     .filter((hit) => hit.status === "active" && hit.memory_id !== input.memory_id);
   return merge(hits, (hit) => hit.memory_id, 3);
 }
@@ -509,11 +621,22 @@ async function syncDocuments(fetchImpl: FetchLike, env: Env, now: () => number, 
   }
   const documents = body.documents;
   const indexed: Array<{ document_id: string; source_path: string }> = [];
+  const checkedScopes = new Set<string>();
+  for (const candidate of documents) {
+    if (!isRecord(candidate)) throw new RequestProblem(400, "invalid_request", "Each document must be an object.");
+    const scope = scopedId(candidate.scope_id);
+    const repository = validateRepositoryId(candidate.repository_id);
+    const key = `${repository}\n${scope}`;
+    if (!checkedScopes.has(key)) {
+      await scopeIds(fetchImpl, env, scope, repository);
+      checkedScopes.add(key);
+    }
+  }
   for (const candidate of documents) {
     if (!isRecord(candidate)) throw new RequestProblem(400, "invalid_request", "Each document must be an object.");
     const scopeId = scopedId(candidate.scope_id);
     const sourcePath = requiredString(candidate.source_path, "source_path", 1_000);
-    const repositoryId = requiredString(candidate.repository_id, "repository_id", 256);
+    const repositoryId = validateRepositoryId(candidate.repository_id);
     const title = requiredString(candidate.title, "title", 240);
     const chunks = Array.isArray(candidate.chunks) ? candidate.chunks.filter((chunk): chunk is string => typeof chunk === "string" && chunk.length > 0) : [];
     if (chunks.length === 0 || chunks.length > 128) throw new RequestProblem(400, "invalid_request", "Each document needs between 1 and 128 chunks.");
@@ -569,7 +692,7 @@ export function createWorker(overrides: Partial<Dependencies> = {}) {
         if (request.method === "POST" && url.pathname === "/v1/recall") {
           requireRole(authorization, "reader");
           const input = parseSearch(await requestJson(request));
-          const scopes = scopeIds(input.scope_id);
+          const scopes = await scopeIds(vespaFetch, env, input.scope_id, input.repository_id);
           const hits = (await Promise.all(scopes.map((scope) => queryScope(vespaFetch, env, "recall", input.query, scope))))
             .flat().map(memoryResult).filter((hit): hit is RankedMemoryResult => hit !== undefined);
           return json({ memories: merge(hits, (hit) => hit.memory_id, input.limit ?? 8).map(withoutMemoryRank), scope_ids: scopes } satisfies RecallResponse);
@@ -577,6 +700,7 @@ export function createWorker(overrides: Partial<Dependencies> = {}) {
         if (request.method === "POST" && url.pathname === "/v1/memories") {
           requireRole(authorization, "contributor");
           const input = parseCreateMemory(await requestJson(request));
+          await scopeIds(vespaFetch, env, input.scope_id, input.repository_id);
           const [memory, duplicate_candidates] = await Promise.all([
             createMemory(vespaFetch, env, dependencies.now, input),
             duplicateCandidates(vespaFetch, env, input),
@@ -586,7 +710,7 @@ export function createWorker(overrides: Partial<Dependencies> = {}) {
         if (request.method === "POST" && url.pathname === "/v1/documents/search") {
           requireRole(authorization, "reader");
           const input = parseSearch(await requestJson(request));
-          const scopes = scopeIds(input.scope_id);
+          const scopes = await scopeIds(vespaFetch, env, input.scope_id, input.repository_id);
           const hits = (await Promise.all(scopes.map((scope) => queryScope(vespaFetch, env, "documents", input.query, scope))))
             .flat().map(referenceResult).filter((hit): hit is RankedReferenceDocumentResult => hit !== undefined);
           return json({ documents: merge(hits, (hit) => hit.document_id, input.limit ?? 8).map(withoutDocumentRank), scope_ids: scopes } satisfies SearchDocumentsResponse);
@@ -594,6 +718,10 @@ export function createWorker(overrides: Partial<Dependencies> = {}) {
         if (request.method === "POST" && url.pathname === "/v1/documents/sync") {
           requireRole(authorization, "contributor");
           return json(await syncDocuments(vespaFetch, env, dependencies.now, await requestJson(request)), 201);
+        }
+        if (request.method === "POST" && url.pathname === "/v1/scopes/sync") {
+          requireRole(authorization, "curator");
+          return json(await syncScopes(vespaFetch, env, dependencies.now, parseSyncScopes(await requestJson(request))), 201);
         }
         const memoryMatch = /^\/v1\/memories\/([^/]+)$/.exec(url.pathname);
         if (request.method === "GET" && memoryMatch?.[1]) {

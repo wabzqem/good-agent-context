@@ -1,4 +1,4 @@
-import type { CreateMemoryRequest, MemoryLifecycleRequest, SearchDocumentsRequest, SupersedeRequest } from "@good-agent-context/contracts";
+import type { CreateMemoryRequest, MemoryLifecycleRequest, SearchDocumentsRequest, SupersedeRequest, SyncScopesRequest } from "@good-agent-context/contracts";
 
 export class RequestProblem extends Error {
   constructor(
@@ -41,6 +41,12 @@ export function scopedId(value: unknown, field = "scope_id"): string {
   return scopeId;
 }
 
+export function repositoryId(value: unknown): string {
+  const id = scopedId(value, "repository_id");
+  if (!id.startsWith("repository:")) throw new RequestProblem(400, "invalid_request", "repository_id must start with repository:.");
+  return id;
+}
+
 export function parseCreateMemory(value: unknown): CreateMemoryRequest {
   if (!isRecord(value)) throw new RequestProblem(400, "invalid_request", "Request body must be an object.");
   const scopeKind = requiredString(value.scope_kind, "scope_kind", 64);
@@ -69,7 +75,7 @@ export function parseCreateMemory(value: unknown): CreateMemoryRequest {
     title,
     body,
     tags: stringArray(value.tags, "tags"),
-    repository_id: value.repository_id === undefined ? undefined : requiredString(value.repository_id, "repository_id", 256),
+    repository_id: repositoryId(value.repository_id),
     source_paths: stringArray(value.source_paths, "source_paths"),
     source_commit: value.source_commit === undefined ? undefined : requiredString(value.source_commit, "source_commit", 256),
     supersedes_ids: stringArray(value.supersedes_ids, "supersedes_ids"),
@@ -82,7 +88,47 @@ export function parseSearch(value: unknown): SearchDocumentsRequest {
   if (!Number.isInteger(limit) || limit < 1 || limit > 20) {
     throw new RequestProblem(400, "invalid_request", "limit must be an integer between 1 and 20.");
   }
-  return { query: requiredString(value.query, "query", 1_000), scope_id: scopedId(value.scope_id), limit };
+  return { query: requiredString(value.query, "query", 1_000), scope_id: scopedId(value.scope_id), repository_id: repositoryId(value.repository_id), limit };
+}
+
+export function parseSyncScopes(value: unknown): SyncScopesRequest {
+  if (!isRecord(value)) throw new RequestProblem(400, "invalid_request", "Request body must be an object.");
+  const repository_id = repositoryId(value.repository_id);
+  if (!Array.isArray(value.scopes) || value.scopes.length > 128) {
+    throw new RequestProblem(400, "invalid_request", "scopes must be an array of at most 128 entries.");
+  }
+  const ranks: Record<string, number> = { organisation: 0, capability: 1, service: 2, component: 3 };
+  const scopes = value.scopes.map((candidate) => {
+    if (!isRecord(candidate) || !Array.isArray(candidate.parent_ids) || candidate.parent_ids.length > 8) {
+      throw new RequestProblem(400, "invalid_request", "Each scope requires a parent_ids array of at most 8 IDs.");
+    }
+    const scope_id = scopedId(candidate.scope_id);
+    if (scope_id.startsWith("repository:")) throw new RequestProblem(400, "invalid_request", "Repository scopes are created from repository_id.");
+    const parent_ids = candidate.parent_ids.map((parent) => scopedId(parent, "parent_id"));
+    if (new Set(parent_ids).size !== parent_ids.length) throw new RequestProblem(400, "invalid_request", "A scope cannot repeat a parent.");
+    for (const parent of parent_ids) {
+      if ((ranks[parent.split(":")[0]!] ?? 99) >= ranks[scope_id.split(":")[0]!]!) {
+        throw new RequestProblem(400, "invalid_request", "A parent must be higher in the organisation, capability, service, component ladder.");
+      }
+    }
+    return { scope_id, parent_ids };
+  });
+  const ids = new Set(scopes.map((scope) => scope.scope_id));
+  if (ids.size !== scopes.length || scopes.some((scope) => scope.parent_ids.some((parent) => !ids.has(parent)))) {
+    throw new RequestProblem(400, "invalid_request", "Scope IDs must be unique and every parent must be declared in the same sync request.");
+  }
+  const byId = new Map(scopes.map((scope) => [scope.scope_id, scope]));
+  for (const scope of scopes) {
+    const closure = new Set<string>();
+    function add(id: string): void {
+      if (closure.has(id)) return;
+      closure.add(id);
+      if (closure.size >= 16) throw new RequestProblem(400, "invalid_request", "A scope closure cannot exceed 16 scopes including its repository.");
+      for (const parent of byId.get(id)?.parent_ids ?? []) add(parent);
+    }
+    add(scope.scope_id);
+  }
+  return { repository_id, scopes };
 }
 
 export function parseMemoryLifecycle(value: unknown): MemoryLifecycleRequest {

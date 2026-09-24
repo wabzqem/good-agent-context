@@ -14,6 +14,8 @@ cd vespa-app
 cd ..
 ```
 
+To redeploy to an already-running local Vespa without feeding test fixtures, run `./vespa-app/scripts/deploy-local.sh` from the repository root. Do not use `vespa deploy --target=local` against `vespa-app` directly: its default `services.xml` uses a Vespa Cloud-only model ID. The local script substitutes `services.local.xml` with a model URL.
+
 Install JavaScript dependencies and configure the local Worker:
 
 ```bash
@@ -23,16 +25,19 @@ cp apps/worker/.dev.vars.example apps/worker/.dev.vars
 npm run dev:worker
 ```
 
-In a second terminal, use the CLI against the Worker:
+In a second terminal, sync this repository's scope graph, then use the CLI against the Worker:
 
 ```bash
 export GOOD_CONTEXT_URL=http://127.0.0.1:8787
 
-npm run dev:cli -- recall 'where is request authentication enforced' capability:payments
-npm run dev:cli -- documents search 'payment idempotency' capability:payments
+npm run dev:cli -- scopes sync
+npm run dev:cli -- recall 'where is request authentication enforced'
+npm run dev:cli -- documents search 'where is the scope model documented'
 ```
 
-To sync repository specifications, copy `.good-agent-context.example.yaml` to `.good-agent-context.yaml`, adjust its stable repository and scope IDs, and make the Worker `REFERENCE_SOURCES_JSON` entry match the repository, scope, and allowed source-path prefix. Then run:
+Each project needs a `.good-agent-context.yaml` at its repository root. Set a stable `repository:` ID, declare scopes with `parents:`, and add path bindings. Exactly one `root: .` binding supplies the fallback; it may point to the repository scope if there is no known capability. The most specific path binding selects the active scope, while recall also includes its synced ancestors and the repository scope. See `.good-agent-context.example.yaml` for a multi-scope example. Run `good-context scopes sync` after changing this file; scope sync requires the curator role. The local Worker profile grants that role. An unsynced scope returns `scope_not_synced` instead of searching an incomplete ladder.
+
+To sync repository specifications, configure the `documents:` section and make the Worker `REFERENCE_SOURCES_JSON` entry match the repository, scope, and allowed source-path prefix. Then run:
 
 ```bash
 npm run dev:cli -- documents sync
@@ -44,7 +49,7 @@ For the hosted API, use browser login once; the CLI registers a public PKCE clie
 
 ```bash
 npm run dev:cli -- auth login
-npm run dev:cli -- recall 'where is request authentication enforced' capability:payments
+npm run dev:cli -- recall 'where is request authentication enforced'
 ```
 
 `GOOD_CONTEXT_URL` defaults to `https://gac.wabz.net`; non-loopback URLs use Cloudflare Access.
@@ -75,6 +80,8 @@ Use the local stdio command in an MCP client configuration:
 ```
 
 Run `good-context auth login` first in a normal terminal. The MCP process reuses the Keychain credential and refreshes opaque Access tokens as needed. For local development, set `GOOD_CONTEXT_URL=http://127.0.0.1:8787`; no local token is needed.
+
+For `recall`, `remember`, and `search_documents`, pass the current project's absolute `project_path`. The MCP server resolves that project's own configuration for each call. A server dedicated to one project may set `GOOD_CONTEXT_PROJECT_ROOT` instead. `scope_id` is optional and overrides the path binding when it names a scope declared by that repository. MCP does not use its own process directory as a project fallback.
 
 It exposes `recall`, `remember`, `mark_useful`, `supersede_memory`, `withdraw_memory`, `restore_memory`, and `search_documents`. Withdrawal and restoration are curator-only operations. `remember` returns up to three scoped active-memory duplicate suggestions. Document search results are explicitly non-authoritative references and include the repository source path/revision.
 

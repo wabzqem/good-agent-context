@@ -1,22 +1,17 @@
 #!/usr/bin/env node
 import { createHash } from "node:crypto";
-import { readFile, stat } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { resolve, relative, sep } from "node:path";
 import fastGlob from "fast-glob";
-import { parse as parseYaml } from "yaml";
-import { clientFromEnvironment, GoodContextApiError, loginWithCloudflareAccess } from "@good-agent-context/client";
-import type { ScopeKind, SyncDocumentsRequest } from "@good-agent-context/contracts";
+import { clientFromEnvironment, GoodContextApiError, loadProjectConfig, loginWithCloudflareAccess, resolveProjectScope, scopeKindFromId } from "@good-agent-context/client";
+import type { SyncDocumentsRequest } from "@good-agent-context/contracts";
 
-interface LocalConfig {
-  repository: string;
-  default_scope: string;
-  documents?: Array<{ kind: "specification"; root: string; include?: string[]; scope: string }>;
-}
+const projectPath = process.env.INIT_CWD ?? process.cwd();
 
 function usage(): never {
   console.error(`Usage:
   good-context recall <query> [scope]
-  good-context remember <scope> <scope-kind> <kind> <title> <body>
+  good-context remember <kind> <title> <body> [scope]
   good-context get <memory-id>
   good-context useful <memory-id>
   good-context supersede <memory-id> <expected-revision> <successor-memory-id>
@@ -24,37 +19,13 @@ function usage(): never {
   good-context restore <memory-id> <expected-revision>
   good-context documents search <query> [scope]
   good-context documents sync [config-path]
+  good-context scopes sync [config-path]
   good-context auth login`);
   process.exit(64);
 }
 
 function print(value: unknown): void {
   process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
-}
-
-async function resolveConfigPath(configPath?: string): Promise<string> {
-  if (configPath) return resolve(configPath);
-  let directory = resolve(process.env.INIT_CWD ?? process.cwd());
-  while (true) {
-    const candidate = resolve(directory, ".good-agent-context.yaml");
-    try {
-      if ((await stat(candidate)).isFile()) return candidate;
-    } catch {
-      // Try the parent directory. A missing local configuration is reported by
-      // the normal read path below so callers retain a useful ENOENT error.
-    }
-    const parent = resolve(directory, "..");
-    if (parent === directory) return resolve(process.env.INIT_CWD ?? process.cwd(), ".good-agent-context.yaml");
-    directory = parent;
-  }
-}
-
-async function loadConfig(configPath?: string): Promise<LocalConfig> {
-  const resolvedConfigPath = await resolveConfigPath(configPath);
-  const raw = await readFile(resolvedConfigPath, "utf8");
-  const config = parseYaml(raw) as LocalConfig;
-  if (!config?.repository || !config.default_scope) throw new Error(`${resolvedConfigPath} requires repository and default_scope.`);
-  return config;
 }
 
 function chunksForMarkdown(markdown: string): { chunks: string[]; headings: string[] } {
@@ -67,9 +38,7 @@ function chunksForMarkdown(markdown: string): { chunks: string[]; headings: stri
 }
 
 async function syncDocuments(configPath?: string): Promise<void> {
-  const resolvedConfigPath = await resolveConfigPath(configPath);
-  const config = await loadConfig(resolvedConfigPath);
-  const repositoryRoot = resolve(resolvedConfigPath, "..");
+  const { root: repositoryRoot, config } = await loadProjectConfig(projectPath, configPath);
   const documents: SyncDocumentsRequest["documents"] = [];
   for (const source of config.documents ?? []) {
     if (source.kind !== "specification") continue;
@@ -107,13 +76,14 @@ async function main(): Promise<void> {
   }
   const client = clientFromEnvironment();
   if (command === "recall" && args.length >= 1) {
-    const config = await loadConfig().catch(() => undefined);
-    print(await client.recall({ query: args[0]!, scope_id: args[1] ?? config?.default_scope ?? usage() }));
+    const scope = await resolveProjectScope(projectPath, args[1]);
+    print(await client.recall({ query: args[0]!, ...scope }));
     return;
   }
-  if (command === "remember" && args.length === 5) {
-    const [scope_id, scope_kind, kind, title, body] = args;
-    print(await client.remember({ scope_id: scope_id!, scope_kind: scope_kind as ScopeKind, kind: kind as "implementation", title: title!, body: body! }));
+  if (command === "remember" && (args.length === 3 || args.length === 4)) {
+    const [kind, title, body, explicitScope] = args;
+    const scope = await resolveProjectScope(projectPath, explicitScope);
+    print(await client.remember({ ...scope, scope_kind: scopeKindFromId(scope.scope_id), kind: kind as "implementation", title: title!, body: body! }));
     return;
   }
   if (command === "get" && args.length === 1) { print(await client.getMemory(args[0]!)); return; }
@@ -131,11 +101,16 @@ async function main(): Promise<void> {
     return;
   }
   if (command === "documents" && args[0] === "search" && args.length >= 2) {
-    const config = await loadConfig().catch(() => undefined);
-    print(await client.searchDocuments({ query: args[1]!, scope_id: args[2] ?? config?.default_scope ?? usage() }));
+    const scope = await resolveProjectScope(projectPath, args[2]);
+    print(await client.searchDocuments({ query: args[1]!, ...scope }));
     return;
   }
   if (command === "documents" && args[0] === "sync" && args.length <= 2) { await syncDocuments(args[1]); return; }
+  if (command === "scopes" && args[0] === "sync" && args.length <= 2) {
+    const { config } = await loadProjectConfig(projectPath, args[1]);
+    print(await client.syncScopes({ repository_id: config.repository, scopes: config.scopes }));
+    return;
+  }
   usage();
 }
 

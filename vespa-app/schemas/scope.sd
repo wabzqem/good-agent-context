@@ -29,6 +29,9 @@ schema scope {
         field repository_ids type array<string> {
             indexing: summary | attribute
         }
+        field bound_scope_ids type array<string> {
+            indexing: summary | attribute
+        }
         field description type string {
             indexing: summary | index
             index: enable-bm25
@@ -54,6 +57,7 @@ schema scope {
         summary ancestor_ids {}
         summary aliases {}
         summary repository_ids {}
+        summary bound_scope_ids {}
         summary description {}
         summary created_at {}
         summary updated_at {}

@@ -32,16 +32,20 @@ function memory(memory_id: string, overrides: Record<string, unknown> = {}) {
   };
 }
 
-function fakeVespa(initial: Record<string, Record<string, unknown>>) {
-  const records = new Map(Object.entries(initial));
+function fakeVespa(initial: Record<string, Record<string, unknown>>, seedScopes = true) {
+  const baseScopes: Array<[string, Record<string, unknown>]> = seedScopes ? [
+    ["acme:repository:payments", { scope_id: "repository:payments", namespace_id: "acme", parent_ids: [], repository_ids: ["repository:payments"], status: "active" }],
+    ["acme:capability:payments", { scope_id: "capability:payments", namespace_id: "acme", parent_ids: [], repository_ids: ["repository:payments"], status: "active" }],
+  ] : [];
+  const records = new Map<string, Record<string, unknown>>([...baseScopes, ...Object.entries(initial)]);
   const requests: Array<{ url: URL; init?: RequestInit }> = [];
   const fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const url = new URL(typeof input === "string" ? input : input instanceof URL ? input : input.url);
     requests.push({ url, init });
-    if (url.pathname.startsWith("/document/v1/gac/scope/")) return new Response("{}", { status: 404 });
     if (url.pathname === "/search/") {
       const children = [...records.values()]
-        .filter((fields) => fields.namespace_id === "acme" && fields.scope_id === "capability:payments" && fields.status !== "withdrawn")
+        .filter((fields) => fields.namespace_id === "acme" && fields.scope_id === url.searchParams.get("scope_id") &&
+          (url.searchParams.get("queryProfile") === "documents" ? fields.lifecycle_status === "active" : fields.status === "active" || fields.status === "superseded"))
         .map((fields, index) => ({ relevance: 1 - index * 0.1, fields: { ...fields, matchfeatures: { lifecycle_weight: fields.status === "superseded" ? 0.03 : 1 } } }));
       return Response.json({ root: { children } });
     }
@@ -61,7 +65,7 @@ function fakeVespa(initial: Record<string, Record<string, unknown>>) {
       }
       return Response.json({ pathId: id });
     }
-    if (existing) return Response.json({ fields: existing });
+    if (existing) return Response.json({ fields: Object.fromEntries(Object.entries(existing).filter(([, value]) => !Array.isArray(value) || value.length > 0)) });
     return new Response("{}", { status: 404 });
   };
   return { fetch: fetch as typeof fetch, records, requests };
@@ -76,10 +80,103 @@ function request(path: string, method = "GET", body?: unknown, authorized = fals
 }
 
 describe("Good Agent Context Worker", () => {
+  it("syncs the scope graph and recalls ancestors plus repository facts without sibling leakage", async () => {
+    const vespa = fakeVespa({
+      service: memory("service", { scope_id: "service:ledger", scope_kind: "service" }),
+      payments: memory("payments"),
+      organisation: memory("organisation", { scope_id: "organisation:acme", scope_kind: "organisation" }),
+      repository: memory("repository", { scope_id: "repository:payments", scope_kind: "repository" }),
+      sibling: memory("sibling", { scope_id: "service:fraud", scope_kind: "service" }),
+    }, false);
+    const worker = createWorker({ fetch: vespa.fetch });
+    const graph = {
+      repository_id: "repository:payments",
+      scopes: [
+        { scope_id: "organisation:acme", parent_ids: [] },
+        { scope_id: "capability:payments", parent_ids: ["organisation:acme"] },
+        { scope_id: "service:ledger", parent_ids: ["capability:payments"] },
+        { scope_id: "service:fraud", parent_ids: ["capability:payments"] },
+      ],
+    };
+    const denied = await worker.fetch(request("/v1/scopes/sync", "POST", graph), env);
+    expect(denied.status).toBe(403);
+    const synced = await worker.fetch(request("/v1/scopes/sync", "POST", graph), { ...env, LOCAL_ROLE: "curator" });
+    expect(synced.status).toBe(201);
+    await expect(synced.json()).resolves.toEqual({ synced: ["repository:payments", "organisation:acme", "capability:payments", "service:ledger", "service:fraud"], unbound: [] });
+    const response = await worker.fetch(request("/v1/recall", "POST", {
+      query: "gateway", scope_id: "service:ledger", repository_id: "repository:payments",
+    }), env);
+    expect(response.status).toBe(200);
+    const body = await response.json() as { memories: Array<{ memory_id: string }>; scope_ids: string[] };
+    expect(body.scope_ids).toEqual(["service:ledger", "capability:payments", "organisation:acme", "repository:payments"]);
+    expect(body.memories.map((item) => item.memory_id).sort()).toEqual(["organisation", "payments", "repository", "service"]);
+    expect(vespa.requests.filter((entry) => entry.url.pathname === "/search/").map((entry) => entry.url.searchParams.get("scope_id")))
+      .toEqual(body.scope_ids);
+  });
+
+  it("requires synced scope metadata before recall", async () => {
+    const vespa = fakeVespa({}, false);
+    const worker = createWorker({ fetch: vespa.fetch });
+    const response = await worker.fetch(request("/v1/recall", "POST", {
+      query: "gateway", scope_id: "capability:payments", repository_id: "repository:payments",
+    }), env);
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({ error: { code: "scope_not_synced" } });
+  });
+
+  it("unbinds scopes removed from a repository configuration", async () => {
+    const vespa = fakeVespa({}, false);
+    const worker = createWorker({ fetch: vespa.fetch });
+    const curator = { ...env, LOCAL_ROLE: "curator" as const };
+    const first = await worker.fetch(request("/v1/scopes/sync", "POST", {
+      repository_id: "repository:payments",
+      scopes: [
+        { scope_id: "capability:payments", parent_ids: [] },
+        { scope_id: "service:ledger", parent_ids: ["capability:payments"] },
+      ],
+    }), curator);
+    expect(first.status).toBe(201);
+    const second = await worker.fetch(request("/v1/scopes/sync", "POST", {
+      repository_id: "repository:payments",
+      scopes: [{ scope_id: "capability:payments", parent_ids: [] }],
+    }), curator);
+    expect(second.status).toBe(201);
+    await expect(second.json()).resolves.toMatchObject({ unbound: ["service:ledger"] });
+    const response = await worker.fetch(request("/v1/recall", "POST", {
+      query: "gateway", scope_id: "service:ledger", repository_id: "repository:payments",
+    }), env);
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({ error: { code: "scope_not_synced" } });
+  });
+
+  it("uses the repository scope alone when no capability is configured", async () => {
+    const vespa = fakeVespa({ repository: memory("repository", { scope_id: "repository:solo", scope_kind: "repository" }) }, false);
+    const worker = createWorker({ fetch: vespa.fetch });
+    const synced = await worker.fetch(request("/v1/scopes/sync", "POST", {
+      repository_id: "repository:solo", scopes: [],
+    }), { ...env, LOCAL_ROLE: "curator" });
+    expect(synced.status).toBe(201);
+    const response = await worker.fetch(request("/v1/recall", "POST", {
+      query: "gateway", scope_id: "repository:solo", repository_id: "repository:solo",
+    }), env);
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ scope_ids: ["repository:solo"], memories: [{ memory_id: "repository" }] });
+  });
+
+  it("rejects a scope bound to a different repository", async () => {
+    const vespa = fakeVespa({});
+    const worker = createWorker({ fetch: vespa.fetch });
+    const response = await worker.fetch(request("/v1/recall", "POST", {
+      query: "gateway", scope_id: "capability:payments", repository_id: "repository:other",
+    }), env);
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toMatchObject({ error: { code: "scope_not_in_repository" } });
+  });
+
   it("does not inspect or require authentication for local requests", async () => {
     const vespa = fakeVespa({});
     const worker = createWorker({ fetch: vespa.fetch });
-    const response = await worker.fetch(request("/v1/recall", "POST", { query: "gateway", scope_id: "capability:payments" }, true), env);
+    const response = await worker.fetch(request("/v1/recall", "POST", { query: "gateway", scope_id: "capability:payments", repository_id: "repository:payments" }, true), env);
     expect(response.status).toBe(200);
   });
 
@@ -87,7 +184,7 @@ describe("Good Agent Context Worker", () => {
     const vespa = fakeVespa({});
     const worker = createWorker({ fetch: vespa.fetch });
     const response = await worker.fetch(
-      new Request("https://api.example/v1/recall", { method: "POST", body: JSON.stringify({ query: "gateway", scope_id: "capability:payments" }) }),
+      new Request("https://api.example/v1/recall", { method: "POST", body: JSON.stringify({ query: "gateway", scope_id: "capability:payments", repository_id: "repository:payments" }) }),
       { ...env, LOCAL_DEVELOPMENT: "false" },
     );
     expect(response.status).toBe(503);
@@ -112,10 +209,10 @@ describe("Good Agent Context Worker", () => {
     const vespa = fakeVespa({ "mem-gateway": memory("mem-gateway") });
     const worker = createWorker({ fetch: vespa.fetch });
     const readerEnv = { ...env, LOCAL_ROLE: "reader" as const };
-    const recall = await worker.fetch(request("/v1/recall", "POST", { query: "gateway", scope_id: "capability:payments" }), readerEnv);
+    const recall = await worker.fetch(request("/v1/recall", "POST", { query: "gateway", scope_id: "capability:payments", repository_id: "repository:payments" }), readerEnv);
     expect(recall.status).toBe(200);
     const remember = await worker.fetch(request("/v1/memories", "POST", {
-      memory_id: "mem-denied", scope_id: "capability:payments", scope_kind: "capability", kind: "architecture",
+      memory_id: "mem-denied", scope_id: "capability:payments", scope_kind: "capability", repository_id: "repository:payments", kind: "architecture",
       title: "Denied", body: "A reader must not create memories.",
     }), readerEnv);
     expect(remember.status).toBe(403);
@@ -141,7 +238,7 @@ describe("Good Agent Context Worker", () => {
   it("injects fixed Vespa recall parameters instead of accepting YQL", async () => {
     const vespa = fakeVespa({ "mem-gateway": memory("mem-gateway") });
     const worker = createWorker({ fetch: vespa.fetch });
-    const response = await worker.fetch(request("/v1/recall", "POST", { query: "gateway authentication", scope_id: "capability:payments", limit: 3 }), env);
+    const response = await worker.fetch(request("/v1/recall", "POST", { query: "gateway authentication", scope_id: "capability:payments", repository_id: "repository:payments", limit: 3 }), env);
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
       memories: [{
@@ -149,27 +246,27 @@ describe("Good Agent Context Worker", () => {
         title: "Gateway owns agent authentication", body: "Coding agents call the authenticated gateway instead of Vespa.",
         tags: ["gateway"], source_paths: [], status: "active",
       }],
-      scope_ids: ["capability:payments"],
+      scope_ids: ["capability:payments", "repository:payments"],
     });
     const search = vespa.requests.find((entry) => entry.url.pathname === "/search/")!.url;
     expect(search.searchParams.get("queryProfile")).toBe("recall");
     expect(search.searchParams.get("namespace_id")).toBe("acme");
     expect(search.searchParams.get("scope_id")).toBe("capability:payments");
     expect(search.searchParams.has("yql")).toBe(false);
-    expect(vespa.requests.some((entry) => entry.url.pathname.includes("/scope/"))).toBe(false);
+    expect(vespa.requests.some((entry) => entry.url.pathname.includes("/scope/"))).toBe(true);
   });
 
   it("writes a validated memory with server-derived namespace", async () => {
     const vespa = fakeVespa({});
     const worker = createWorker({ fetch: vespa.fetch, now: () => 1_770_000_000_000 });
     const response = await worker.fetch(request("/v1/memories", "POST", {
-      memory_id: "mem-created", scope_id: "capability:payments", scope_kind: "capability", kind: "architecture",
+      memory_id: "mem-created", scope_id: "capability:payments", scope_kind: "capability", repository_id: "repository:payments", kind: "architecture",
       title: "Gateway is the Vespa boundary", body: "Agent clients use the gateway to access durable memory rather than calling Vespa directly.",
     }), env);
     expect(response.status).toBe(201);
     await expect(response.json()).resolves.toEqual({
       memory: {
-        memory_id: "mem-created", revision: 1, scope_id: "capability:payments", kind: "architecture",
+        memory_id: "mem-created", revision: 1, scope_id: "capability:payments", repository_id: "repository:payments", kind: "architecture",
         title: "Gateway is the Vespa boundary", body: "Agent clients use the gateway to access durable memory rather than calling Vespa directly.",
         tags: [], source_paths: [], status: "active",
       },
@@ -204,9 +301,9 @@ describe("Good Agent Context Worker", () => {
     await expect(withdrawn.json()).resolves.toMatchObject({ memory_id: "active", status: "withdrawn", revision: 2 });
     expect(vespa.records.get("active")).toMatchObject({ status: "withdrawn", revision: 2 });
 
-    const recalledWhileWithdrawn = await worker.fetch(request("/v1/recall", "POST", { query: "gateway", scope_id: "capability:payments" }), curatorEnv);
+    const recalledWhileWithdrawn = await worker.fetch(request("/v1/recall", "POST", { query: "gateway", scope_id: "capability:payments", repository_id: "repository:payments" }), curatorEnv);
     const recalledBody = await recalledWhileWithdrawn.json() as { memories: Array<{ memory_id: string }>; scope_ids: string[] };
-    expect(recalledBody.scope_ids).toEqual(["capability:payments"]);
+    expect(recalledBody.scope_ids).toEqual(["capability:payments", "repository:payments"]);
     expect(recalledBody.memories.map((entry) => entry.memory_id)).not.toContain("active");
 
     const restored = await worker.fetch(request("/v1/memories/active/restore", "POST", { expected_revision: 2 }), curatorEnv);
@@ -230,7 +327,7 @@ describe("Good Agent Context Worker", () => {
       },
     });
     const worker = createWorker({ fetch: vespa.fetch });
-    const response = await worker.fetch(request("/v1/documents/search", "POST", { query: "retries", scope_id: "capability:payments" }), env);
+    const response = await worker.fetch(request("/v1/documents/search", "POST", { query: "retries", scope_id: "capability:payments", repository_id: "repository:payments" }), env);
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
       documents: [{
@@ -238,7 +335,7 @@ describe("Good Agent Context Worker", () => {
         repository_id: "repository:payments", source_path: "docs/payment-api.md", source_uri: "https://example.test/docs/payment-api.md",
         source_revision: "abc123", guidance_notes: ["Open the repository source before changing behavior."],
       }],
-      scope_ids: ["capability:payments"],
+      scope_ids: ["capability:payments", "repository:payments"],
     });
   });
 
@@ -246,7 +343,7 @@ describe("Good Agent Context Worker", () => {
     const vespa = fakeVespa({});
     const worker = createWorker({ fetch: vespa.fetch });
     const response = await worker.fetch(request("/v1/documents/sync", "POST", {
-      documents: [{ scope_id: "capability:payments", kind: "specification", title: "Untrusted", chunks: ["text"], chunk_headings: ["Heading"], repository_id: "other", source_path: "private/spec.md", source_revision: "abc", source_content_hash: "sha256:test" }],
+      documents: [{ scope_id: "capability:payments", kind: "specification", title: "Untrusted", chunks: ["text"], chunk_headings: ["Heading"], repository_id: "repository:payments", source_path: "private/spec.md", source_revision: "abc", source_content_hash: "sha256:test" }],
     }), env);
     expect(response.status).toBe(503);
     await expect(response.json()).resolves.toMatchObject({ error: { code: "reference_sync_not_configured" } });

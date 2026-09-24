@@ -29,7 +29,7 @@
     "local": {
       "vars": {
         "LOCAL_DEVELOPMENT": "true",
-        "LOCAL_ROLE": "contributor",
+        "LOCAL_ROLE": "curator",
         "NAMESPACE_ID": "acme",
         "VESPA_ENDPOINT": "http://127.0.0.1:8080",
         "REFERENCE_SOURCES_JSON": "[{\"repository_id\":\"repository:good-agent-context\",\"scope_id\":\"capability:good-agent-context\",\"path_prefix\":\"docs\"}]"

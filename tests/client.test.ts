@@ -16,7 +16,7 @@ describe("GoodContextClient service-token authentication", () => {
         GOOD_CONTEXT_SERVICE_TOKEN_ID: "must-not-be-sent",
         GOOD_CONTEXT_SERVICE_TOKEN_SECRET: "must-not-be-sent",
       });
-      await client.recall({ query: "authentication", scope_id: "capability:payments" });
+      await client.recall({ query: "authentication", scope_id: "capability:payments", repository_id: "repository:payments" });
       expect(receivedHeaders?.has("authorization")).toBe(false);
       expect(receivedHeaders?.has("cf-access-client-id")).toBe(false);
       expect(receivedHeaders?.has("cf-access-client-secret")).toBe(false);
@@ -45,7 +45,7 @@ describe("GoodContextClient service-token authentication", () => {
         return Response.json({ memories: [], scope_ids: ["capability:payments"] });
       },
     });
-    await client.recall({ query: "authentication", scope_id: "capability:payments" });
+    await client.recall({ query: "authentication", scope_id: "capability:payments", repository_id: "repository:payments" });
     expect(receivedHeaders?.get("cf-access-client-id")).toBe("client-id");
     expect(receivedHeaders?.get("cf-access-client-secret")).toBe("client-secret");
     expect(receivedHeaders?.has("authorization")).toBe(false);

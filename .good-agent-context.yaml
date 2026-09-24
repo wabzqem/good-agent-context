@@ -1,6 +1,13 @@
 version: 1
 repository: repository:good-agent-context
-default_scope: capability:good-agent-context
+
+scopes:
+  - id: capability:good-agent-context
+    parents: []
+
+bindings:
+  - root: .
+    scope: capability:good-agent-context
 
 documents:
   - kind: specification

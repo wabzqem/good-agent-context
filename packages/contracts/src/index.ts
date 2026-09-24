@@ -35,6 +35,7 @@ export interface Memory {
 export interface RecallRequest {
   query: string;
   scope_id: string;
+  repository_id: string;
   limit?: number;
 }
 
@@ -63,7 +64,7 @@ export interface CreateMemoryRequest {
   title: string;
   body: string;
   tags?: string[];
-  repository_id?: string;
+  repository_id: string;
   source_paths?: string[];
   source_commit?: string;
   supersedes_ids?: string[];
@@ -111,7 +112,23 @@ export interface ReferenceDocument {
 export interface SearchDocumentsRequest {
   query: string;
   scope_id: string;
+  repository_id: string;
   limit?: number;
+}
+
+export interface ScopeDefinition {
+  scope_id: string;
+  parent_ids: string[];
+}
+
+export interface SyncScopesRequest {
+  repository_id: string;
+  scopes: ScopeDefinition[];
+}
+
+export interface SyncScopesResponse {
+  synced: string[];
+  unbound: string[];
 }
 
 export interface ReferenceDocumentResult extends Pick<ReferenceDocument,

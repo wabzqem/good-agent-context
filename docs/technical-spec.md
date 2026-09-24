@@ -98,6 +98,7 @@ Clients provide ergonomic domain operations and local context discovery. Their r
 
 - Discovering the current repository and matching local roots to configured logical scopes.
 - Obtaining or loading an access token.
+- Resolving the active scope from the current project's repository configuration and path binding.
 - Calling the domain API.
 - Formatting compact results for humans or agents.
 - For an explicit sync command, reading configured repository documents and supplying their repository-relative provenance.
@@ -251,7 +252,7 @@ The initial hosted model is one namespace per Worker/Access application. This ma
 
 A later shared multi-tenant Worker must carry a signed namespace claim or use an equally strong host-to-namespace binding; a request field is never sufficient.
 
-For the first release, readers can read the namespace and contributors can write to any valid scope label in that namespace. Private capability subtrees are deferred until there is a clear Access-policy mapping and curated scope graph.
+For the first release, readers can read synced scopes bound to the requested repository and contributors can write to those scopes. Curators sync scope metadata. Private capability subtrees are deferred until there is a clear Access-policy mapping.
 
 Clients may request a narrower scope but cannot widen this context. The namespace injected into Vespa queries and writes always comes from the Worker-derived context.
 
@@ -267,7 +268,7 @@ For local development, Vespa binds only to loopback or a private Docker network 
 
 ## 7. Scope model
 
-### 7.1 Lazy scope labels
+### 7.1 Stable scope IDs
 
 ```typescript
 type ScopeKind =
@@ -280,20 +281,29 @@ type ScopeKind =
 type ScopeId = `${ScopeKind}:${string}`;
 ```
 
-Phase 1 does not require a scope record to exist before a memory or reference document is written or recalled. A valid scope ID is a stable, lowercase label such as `capability:payments` or `service:ledger`; the prefix must match `scope_kind` when a memory is written. The Worker attaches the authenticated namespace server-side, so a scope label cannot cross that boundary.
+Scope IDs are stable, lowercase labels such as `capability:payments` or `service:ledger`; the prefix must match `scope_kind` when a memory is written. The Worker attaches the authenticated namespace server-side, so a scope label cannot cross that boundary.
 
-This avoids a separate registration workflow and supports newly discovered services or capabilities immediately. It does mean typos can fragment retrieval, so clients should take IDs from repository configuration where available. A later curated `scope` document may add display names, aliases, parent IDs, and a denormalized ancestor closure for hierarchy, policy, and synthesis. It is an optional enrichment, not an admission check.
+Each repository declares the scopes it uses and syncs their parent links through `POST /v1/scopes/sync`. The Worker stores those links in Vespa `scope` documents, verifies repository membership, and walks parents for recall. A missing scope fails with `scope_not_synced`. The repository scope is created automatically by sync, so a repository with no known capability needs no `scopes:` entries.
 
 ### 7.2 Repository bindings
 
-A committed repository configuration may resolve local roots to stable scope IDs:
+A committed repository configuration resolves local roots to stable scope IDs:
 
 ```yaml
 version: 1
 repository: repository:platform-monorepo
-default_scope: capability:payments
+
+scopes:
+  - id: organisation:acme
+    parents: []
+  - id: capability:payments
+    parents: [organisation:acme]
+  - id: service:ledger
+    parents: [capability:payments]
 
 bindings:
+  - root: .
+    scope: capability:payments
   - root: services/ledger
     scope: service:ledger
   - root: services/fraud
@@ -306,22 +316,22 @@ documents:
     scope: capability:payments
 ```
 
-Binding paths are used only by the local client to choose an initial requested scope. Document roots declare repository-owned material that an explicit sync command may index. Paths and globs are repository-relative; traversal outside the repository, generated output, vendor trees, binaries, and symlinks escaping the root are rejected.
+The most specific binding path chooses the initial requested scope. Exactly one `root: .` binding is required as the fallback; it can select the repository scope when no capability is known. An explicit declared scope overrides the binding. The CLI uses the current project path. MCP requires `project_path` on each scoped call or a configured `GOOD_CONTEXT_PROJECT_ROOT`, since its process directory may belong to another project. Document roots declare repository-owned material that an explicit sync command may index. Paths and globs are repository-relative; traversal outside the repository, generated output, vendor trees, binaries, and symlinks escaping the root are rejected.
 
-The namespace deliberately does not appear in this file; the Worker derives it from the protected host/application. The API validates every named scope ID, but does not require it to be pre-registered.
+The namespace deliberately does not appear in this file; the Worker derives it from the protected host/application. A curator syncs the configured graph before recall. The Worker rejects graph conflicts between repositories and removes repository membership from scopes removed from the configuration.
 
-### 7.3 Future curated scope expansion
+### 7.3 Scope expansion
 
-Given `service:ledger` in `repository:platform-monorepo`, the Worker may construct:
+Given `service:ledger` in `repository:platform-monorepo`, the Worker constructs:
 
 ```text
 service:ledger
 capability:payments
-org:acme
+organisation:acme
 repository:platform-monorepo
 ```
 
-This expansion is deferred. When introduced, the closure will follow curated parent edges; unrelated services and capabilities will be excluded. A request may explicitly ask to omit ancestors or the repository scope, but cannot add unauthorized scopes.
+The closure follows synced parent edges and always includes the repository scope. Unrelated services and capabilities are excluded. The Worker limits closure size and rejects cycles or missing metadata.
 
 ## 8. Public API
 
@@ -342,7 +352,7 @@ POST /v1/recall
 }
 ```
 
-The namespace is not accepted in the body. The service validates the requested scope-ID syntax, injects the authenticated namespace, constructs fixed Vespa requests, and returns compact domain results rather than raw Vespa JSON. Initial retrieval is exact-scope; a future curated scope graph may add explicit ancestor expansion.
+The namespace is not accepted in the body. The service validates `scope_id` and `repository_id`, checks their synced relationship, injects the authenticated namespace, and queries the active scope, its ancestors, and the repository scope. It returns compact domain results rather than raw Vespa JSON.
 
 Normal recall returns two separately labelled lanes: ranked memories and at most a small configured number of relevant reference documents. The Worker queries the two schemas concurrently and does not compare their raw scores: memory ranking includes decay/usefulness, while reference ranking intentionally does not. Reference hits always include `source_path`, `source_revision`, and the best-matching excerpts.
 
@@ -576,7 +586,7 @@ All product data lives in the same Vespa application, separated by document type
 | Schema | ID and key fields | Search role |
 | --- | --- | --- |
 | `memory` | `namespace_id`, `memory_id`, `revision` | Authoritative current memory and normal recall corpus. |
-| `scope` | `namespace_id`, `scope_id`, kind, parents, ancestors, aliases, status | Optional curated graph for future hierarchy, policy, and synthesis; not required to create or query a scope. |
+| `scope` | `namespace_id`, `scope_id`, kind, parents, ancestors, repository bindings, status | Synced graph used for bounded ancestor expansion and repository membership checks. |
 | `reference_document` | repository/path-derived ID, source revision/hash, lifecycle, chunks | Rebuildable repository specification index; excluded from the memory corpus. |
 
 `scope` does not need embeddings or HNSW. Usefulness and supersession state are stored directly on the current memory document, so Vespa remains the only product datastore without auxiliary lifecycle collections.
@@ -695,7 +705,7 @@ The client-generated UUIDv7 is the operation's idempotency key. There is no outb
 ### 11.2 Recall
 
 1. Access authenticates the caller and the Worker derives the namespace and reader role without a database lookup.
-2. The Worker validates the requested scope ID and uses it as an exact-scope filter within the authenticated namespace.
+2. The Worker validates the requested scope and repository IDs, reads the synced parent graph, and builds a bounded closure within the authenticated namespace.
 3. It enforces query length, result limit, timeout, and rate limits.
 4. It constructs fixed memory and reference-document requests with mandatory namespace and scope filters. Memory recall admits active and superseded status, then applies the lifecycle rank penalty; withdrawn memories remain excluded. Reference-document lifecycle filtering remains active-only by default.
 5. It runs the queries concurrently, caps the reference lane independently, and returns a compact typed response.

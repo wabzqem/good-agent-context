@@ -12,10 +12,13 @@ import type {
   SupersedeRequest,
   SyncDocumentsRequest,
   SyncDocumentsResponse,
+  SyncScopesRequest,
+  SyncScopesResponse,
 } from "@good-agent-context/contracts";
 import { storedAccessToken } from "./access";
 
 export { loginWithCloudflareAccess } from "./access";
+export { loadProjectConfig, resolveProjectScope, scopeKindFromId } from "./project-scope";
 
 export class GoodContextApiError extends Error {
   constructor(readonly status: number, readonly code: string, message: string) {
@@ -85,6 +88,10 @@ export class GoodContextClient {
 
   async syncDocuments(request: SyncDocumentsRequest): Promise<SyncDocumentsResponse> {
     return this.request("/v1/documents/sync", "POST", request);
+  }
+
+  async syncScopes(request: SyncScopesRequest): Promise<SyncScopesResponse> {
+    return this.request("/v1/scopes/sync", "POST", request);
   }
 
   private async request<T>(path: string, method: string, body?: unknown): Promise<T> {

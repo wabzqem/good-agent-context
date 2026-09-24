@@ -45,7 +45,7 @@ Each memory has one primary logical scope. Examples:
 - Service API behaviour: `service:ledger`
 - Component implementation: `component:posting-engine`
 - Repository build tooling: `repository:platform-monorepo`
-- Organisation-wide convention: `org:acme`
+- Organisation-wide convention: `organisation:acme`
 
 Scope relationships use an array of parent IDs so that a shared service can support more than one capability. A local repository configuration may map directories to scope IDs, but those paths are resolution metadata and are not the stored memory scope.
 
@@ -69,7 +69,7 @@ The API boundary is intentional. Direct Vespa access would let clients bypass na
 
 Deliverables:
 
-- Agree on stable scope-identifier conventions; a scope graph is a later, optional enrichment.
+- Agree on stable scope-identifier conventions and sync repository-declared parent relationships.
 - Define memory and API JSON schemas.
 - Define the reference-document contract, provenance requirements, and source configuration.
 - Define authentication roles and permissions.
@@ -119,7 +119,7 @@ Acceptance criteria:
 
 - An agent can complete the full workflow without constructing YQL or document API requests.
 - MCP exposes explicit document search, while normal recall can surface a small, separately labelled set of relevant specification results.
-- The server derives namespace and coarse role from the authenticated principal; it validates but does not pre-register scope labels.
+- The server derives namespace and coarse role from the authenticated principal; it validates and resolves synced repository scope labels.
 - Arbitrary query parameters, rank profiles, document writes, and namespace overrides are impossible through the public API.
 
 ### Phase 3: Cloudflare authentication and Vespa lifecycle storage

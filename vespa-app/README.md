@@ -6,7 +6,7 @@ This is the local Vespa vertical slice for Good Agent Context. It implements the
 
 - `memory`: current active memory records, BM25, native E5 embeddings, HNSW, freshness decay, and usefulness boost.
 - `reference_document`: repository-owned specification copies, chunk-level BM25 and multi-vector semantic matching, source provenance, and no age decay.
-- `scope`: optional, future curated logical-scope graph. Normal Phase 1/2 reads and writes do not require scope records to be predefined.
+- `scope`: repository-bound logical-scope graph. The Worker syncs repository membership and parent links before scoped reads and writes; recall follows those links and also searches the repository scope.
 - Locked query profiles: `recall` and `documents` fix schema, ranking, result summary, lifecycle filter, and retrieval query.
 - Local fixtures and a smoke test for namespace/lifecycle filtering and source-of-truth provenance.
 
@@ -17,6 +17,8 @@ The E5 model is fetched by Vespa from Hugging Face on its first use. The first d
 ## Run locally
 
 Docker Desktop must be running. These scripts bind Vespa only to `127.0.0.1`.
+
+For an existing local container, run `./scripts/deploy-local.sh` from this directory to redeploy without feeding fixtures. Do not run `vespa deploy --target=local` against this directory: the default `services.xml` uses a Vespa Cloud-only model ID, while the local script substitutes `services.local.xml` with a model URL.
 
 ```bash
 cd vespa-app
