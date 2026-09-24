@@ -25,6 +25,8 @@ export class GoodContextApiError extends Error {
 
 export interface GoodContextClientOptions {
   baseUrl: string;
+  /** Set to `none` for a trusted local Worker that does not require Access. */
+  authentication?: "access" | "none";
   token?: string;
   tokenProvider?: () => Promise<string | undefined>;
   /** Cloudflare Access service-token client ID for unattended workloads. */
@@ -39,6 +41,9 @@ export class GoodContextClient {
   private readonly baseUrl: URL;
 
   constructor(private readonly options: GoodContextClientOptions) {
+    if (options.authentication === "none" && (options.serviceTokenId || options.serviceTokenSecret)) {
+      throw new Error("Cloudflare Access service-token authentication cannot be configured when authentication is disabled.");
+    }
     if (Boolean(options.serviceTokenId) !== Boolean(options.serviceTokenSecret)) {
       throw new Error("Both serviceTokenId and serviceTokenSecret are required for Cloudflare Access service-token authentication.");
     }
@@ -83,18 +88,19 @@ export class GoodContextClient {
   }
 
   private async request<T>(path: string, method: string, body?: unknown): Promise<T> {
+    const authenticationDisabled = this.options.authentication === "none";
     const serviceTokenHeaders = this.options.serviceTokenId && this.options.serviceTokenSecret
       ? {
         "cf-access-client-id": this.options.serviceTokenId,
         "cf-access-client-secret": this.options.serviceTokenSecret,
       }
       : undefined;
-    const token = serviceTokenHeaders ? undefined : this.options.token ?? await this.options.tokenProvider?.();
-    if (!serviceTokenHeaders && !token) throw new Error("No Access token is available. Run `good-context auth login`, set GOOD_CONTEXT_TOKEN for local development, or configure a Cloudflare Access service token.");
+    const token = authenticationDisabled || serviceTokenHeaders ? undefined : this.options.token ?? await this.options.tokenProvider?.();
+    if (!authenticationDisabled && !serviceTokenHeaders && !token) throw new Error("No Access token is available. Run `good-context auth login` or configure a Cloudflare Access service token.");
     const response = await this.fetchImpl(new URL(path.slice(1), this.baseUrl), {
       method,
       headers: {
-        ...(serviceTokenHeaders ?? { authorization: `Bearer ${token}` }),
+        ...(authenticationDisabled ? {} : serviceTokenHeaders ?? { authorization: `Bearer ${token}` }),
         ...(body === undefined ? {} : { "content-type": "application/json" }),
       },
       body: body === undefined ? undefined : JSON.stringify(body),
@@ -110,14 +116,17 @@ export class GoodContextClient {
 
 export function clientFromEnvironment(environment: Record<string, string | undefined> = process.env): GoodContextClient {
   const baseUrl = environment.GOOD_CONTEXT_URL ?? "https://gac.wabz.net";
+  const hostname = new URL(baseUrl).hostname;
+  const authentication = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1" ? "none" : "access";
   const serviceTokenId = environment.GOOD_CONTEXT_SERVICE_TOKEN_ID;
   const serviceTokenSecret = environment.GOOD_CONTEXT_SERVICE_TOKEN_SECRET;
   const token = environment.GOOD_CONTEXT_TOKEN;
   return new GoodContextClient({
     baseUrl,
-    token,
-    serviceTokenId,
-    serviceTokenSecret,
-    tokenProvider: token || serviceTokenId || serviceTokenSecret ? undefined : () => storedAccessToken(baseUrl),
+    authentication,
+    token: authentication === "none" ? undefined : token,
+    serviceTokenId: authentication === "none" ? undefined : serviceTokenId,
+    serviceTokenSecret: authentication === "none" ? undefined : serviceTokenSecret,
+    tokenProvider: authentication === "none" || token || serviceTokenId || serviceTokenSecret ? undefined : () => storedAccessToken(baseUrl),
   });
 }

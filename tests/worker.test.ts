@@ -3,8 +3,7 @@ import { authorizationFromAccessClaims, createWorker, type Env } from "../apps/w
 
 const env: Env = {
   LOCAL_DEVELOPMENT: "true",
-  DEVELOPMENT_AUTH_TOKEN: "local-token",
-  DEVELOPMENT_AUTH_ROLE: "contributor",
+  LOCAL_ROLE: "contributor",
   NAMESPACE_ID: "acme",
   VESPA_ENDPOINT: "http://vespa.test:8080",
 };
@@ -68,7 +67,7 @@ function fakeVespa(initial: Record<string, Record<string, unknown>>) {
   return { fetch: fetch as typeof fetch, records, requests };
 }
 
-function request(path: string, method = "GET", body?: unknown, authorized = true): Request {
+function request(path: string, method = "GET", body?: unknown, authorized = false): Request {
   return new Request(`https://api.example${path}`, {
     method,
     headers: { ...(authorized ? { authorization: "Bearer local-token" } : {}), ...(body === undefined ? {} : { "content-type": "application/json" }) },
@@ -77,11 +76,11 @@ function request(path: string, method = "GET", body?: unknown, authorized = true
 }
 
 describe("Good Agent Context Worker", () => {
-  it("requires a local bearer token before reading", async () => {
+  it("does not inspect or require authentication for local requests", async () => {
     const vespa = fakeVespa({});
     const worker = createWorker({ fetch: vespa.fetch });
-    const response = await worker.fetch(request("/v1/recall", "POST", { query: "gateway", scope_id: "capability:payments" }, false), env);
-    expect(response.status).toBe(401);
+    const response = await worker.fetch(request("/v1/recall", "POST", { query: "gateway", scope_id: "capability:payments" }, true), env);
+    expect(response.status).toBe(200);
   });
 
   it("fails closed when production Access JWT verification is not configured", async () => {
@@ -89,7 +88,7 @@ describe("Good Agent Context Worker", () => {
     const worker = createWorker({ fetch: vespa.fetch });
     const response = await worker.fetch(
       new Request("https://api.example/v1/recall", { method: "POST", body: JSON.stringify({ query: "gateway", scope_id: "capability:payments" }) }),
-      { ...env, LOCAL_DEVELOPMENT: "false", DEVELOPMENT_AUTH_TOKEN: undefined },
+      { ...env, LOCAL_DEVELOPMENT: "false" },
     );
     expect(response.status).toBe(503);
     await expect(response.json()).resolves.toMatchObject({ error: { code: "authentication_not_configured" } });
@@ -109,10 +108,10 @@ describe("Good Agent Context Worker", () => {
     });
   });
 
-  it("enforces reader and contributor route permissions after local authentication", async () => {
+  it("enforces reader and contributor route permissions for local requests", async () => {
     const vespa = fakeVespa({ "mem-gateway": memory("mem-gateway") });
     const worker = createWorker({ fetch: vespa.fetch });
-    const readerEnv = { ...env, DEVELOPMENT_AUTH_ROLE: "reader" as const };
+    const readerEnv = { ...env, LOCAL_ROLE: "reader" as const };
     const recall = await worker.fetch(request("/v1/recall", "POST", { query: "gateway", scope_id: "capability:payments" }), readerEnv);
     expect(recall.status).toBe(200);
     const remember = await worker.fetch(request("/v1/memories", "POST", {
@@ -199,7 +198,7 @@ describe("Good Agent Context Worker", () => {
     const contributorAttempt = await worker.fetch(request("/v1/memories/active/withdraw", "POST", { expected_revision: 1 }), env);
     expect(contributorAttempt.status).toBe(403);
 
-    const curatorEnv = { ...env, DEVELOPMENT_AUTH_ROLE: "curator" as const };
+    const curatorEnv = { ...env, LOCAL_ROLE: "curator" as const };
     const withdrawn = await worker.fetch(request("/v1/memories/active/withdraw", "POST", { expected_revision: 1 }), curatorEnv);
     expect(withdrawn.status).toBe(200);
     await expect(withdrawn.json()).resolves.toMatchObject({ memory_id: "active", status: "withdrawn", revision: 2 });

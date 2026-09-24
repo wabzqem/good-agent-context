@@ -1,7 +1,39 @@
 import { describe, expect, it } from "vitest";
-import { GoodContextClient } from "../packages/client/src/index";
+import { clientFromEnvironment, GoodContextClient } from "../packages/client/src/index";
 
 describe("GoodContextClient service-token authentication", () => {
+  it("does not use or look up credentials for a loopback Worker", async () => {
+    let receivedHeaders: Headers | undefined;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (_input, init) => {
+      receivedHeaders = new Headers(init?.headers);
+      return Response.json({ memories: [], scope_ids: ["capability:payments"] });
+    };
+    try {
+      const client = clientFromEnvironment({
+        GOOD_CONTEXT_URL: "http://127.0.0.1:8787",
+        GOOD_CONTEXT_TOKEN: "must-not-be-sent",
+        GOOD_CONTEXT_SERVICE_TOKEN_ID: "must-not-be-sent",
+        GOOD_CONTEXT_SERVICE_TOKEN_SECRET: "must-not-be-sent",
+      });
+      await client.recall({ query: "authentication", scope_id: "capability:payments" });
+      expect(receivedHeaders?.has("authorization")).toBe(false);
+      expect(receivedHeaders?.has("cf-access-client-id")).toBe(false);
+      expect(receivedHeaders?.has("cf-access-client-secret")).toBe(false);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("rejects Access credentials when authentication is disabled", () => {
+    expect(() => new GoodContextClient({
+      baseUrl: "http://127.0.0.1:8787",
+      authentication: "none",
+      serviceTokenId: "client-id",
+      serviceTokenSecret: "client-secret",
+    })).toThrow(/cannot be configured/);
+  });
+
   it("sends Cloudflare Access service-token headers instead of a bearer token", async () => {
     let receivedHeaders: Headers | undefined;
     const client = new GoodContextClient({

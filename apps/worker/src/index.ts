@@ -18,9 +18,8 @@ export type NamespaceRole = "reader" | "contributor" | "curator";
 
 export interface Env {
   LOCAL_DEVELOPMENT: string;
-  DEVELOPMENT_AUTH_TOKEN?: string;
-  /** Local-only role assigned after DEVELOPMENT_AUTH_TOKEN has been verified. */
-  DEVELOPMENT_AUTH_ROLE?: NamespaceRole;
+  /** Local-only role for trusted, unauthenticated requests. */
+  LOCAL_ROLE?: NamespaceRole;
   /** Cloudflare Access team domain, including https:// and no path. */
   ACCESS_TEAM_DOMAIN?: string;
   /** Audience (AUD) of the Cloudflare Access application protecting this Worker. */
@@ -190,7 +189,7 @@ function accessJwks(teamDomain: string): ReturnType<typeof createRemoteJWKSet> {
 
 interface AuthorizationContext {
   role: NamespaceRole;
-  principal_type: "development" | "user" | "service";
+  principal_type: "local" | "user" | "service";
 }
 
 const roleRank: Record<NamespaceRole, number> = { reader: 1, contributor: 2, curator: 3 };
@@ -200,8 +199,8 @@ function configuredRole(value: unknown, setting: string): NamespaceRole {
   throw new RequestProblem(503, "authorization_misconfigured", `${setting} must be reader, contributor, or curator.`);
 }
 
-function configuredDefaultRole(env: Pick<Env, "LOCAL_DEVELOPMENT" | "DEVELOPMENT_AUTH_ROLE" | "DEFAULT_ROLE">): NamespaceRole {
-  if (env.LOCAL_DEVELOPMENT === "true") return configuredRole(env.DEVELOPMENT_AUTH_ROLE ?? "contributor", "DEVELOPMENT_AUTH_ROLE");
+function configuredDefaultRole(env: Pick<Env, "LOCAL_DEVELOPMENT" | "LOCAL_ROLE" | "DEFAULT_ROLE">): NamespaceRole {
+  if (env.LOCAL_DEVELOPMENT === "true") return configuredRole(env.LOCAL_ROLE ?? "contributor", "LOCAL_ROLE");
   if (!env.DEFAULT_ROLE) throw new RequestProblem(503, "authorization_misconfigured", "DEFAULT_ROLE is required for hosted requests.");
   return configuredRole(env.DEFAULT_ROLE, "DEFAULT_ROLE");
 }
@@ -253,13 +252,7 @@ function requireRole(context: AuthorizationContext, required: NamespaceRole): vo
 
 async function requireIdentity(request: Request, env: Env): Promise<AuthorizationContext> {
   if (env.LOCAL_DEVELOPMENT === "true") {
-    if (!env.DEVELOPMENT_AUTH_TOKEN) {
-      throw new RequestProblem(500, "development_auth_not_configured", "DEVELOPMENT_AUTH_TOKEN is required for local development.");
-    }
-    if (request.headers.get("authorization") !== `Bearer ${env.DEVELOPMENT_AUTH_TOKEN}`) {
-      throw new RequestProblem(401, "unauthorized", "A valid local development bearer token is required.");
-    }
-    return { role: configuredDefaultRole(env), principal_type: "development" };
+    return { role: configuredDefaultRole(env), principal_type: "local" };
   }
 
   if (!env.ACCESS_TEAM_DOMAIN || !env.ACCESS_AUD) {

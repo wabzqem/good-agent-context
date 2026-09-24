@@ -1,6 +1,5 @@
 LOCAL_DEVELOPMENT=true
-DEVELOPMENT_AUTH_TOKEN=replace-with-a-local-only-token
-DEVELOPMENT_AUTH_ROLE=contributor
+LOCAL_ROLE=contributor
 NAMESPACE_ID=acme
 VESPA_ENDPOINT=http://127.0.0.1:8080
 REFERENCE_SOURCES_JSON=[{"repository_id":"repository:platform-monorepo","scope_id":"capability:payments","path_prefix":"specs"}]

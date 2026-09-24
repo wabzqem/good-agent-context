@@ -14,12 +14,12 @@ cd vespa-app
 cd ..
 ```
 
-Install JavaScript dependencies and configure a local-only Worker credential:
+Install JavaScript dependencies and configure the local Worker:
 
 ```bash
 npm install
 cp apps/worker/.dev.vars.example apps/worker/.dev.vars
-# Replace DEVELOPMENT_AUTH_TOKEN and REFERENCE_SOURCES_JSON in apps/worker/.dev.vars.
+# Replace REFERENCE_SOURCES_JSON in apps/worker/.dev.vars.
 npm run dev:worker
 ```
 
@@ -27,7 +27,6 @@ In a second terminal, use the CLI against the Worker:
 
 ```bash
 export GOOD_CONTEXT_URL=http://127.0.0.1:8787
-export GOOD_CONTEXT_TOKEN=replace-with-the-same-local-only-token
 
 npm run dev:cli -- recall 'where is request authentication enforced' capability:payments
 npm run dev:cli -- documents search 'payment idempotency' capability:payments
@@ -39,7 +38,7 @@ To sync repository specifications, copy `.good-agent-context.example.yaml` to `.
 npm run dev:cli -- documents sync
 ```
 
-The local token is intentionally supported only when `LOCAL_DEVELOPMENT=true`. The deployed Worker is protected by Cloudflare Access and independently verifies the signed `Cf-Access-Jwt-Assertion` against Cloudflare's public signing keys, expected issuer, and application audience. Never put the development token or a Vespa credential in an agent configuration.
+When `GOOD_CONTEXT_URL` is a loopback URL, the client sends no authentication headers and does not attempt Access login. The matching `LOCAL_DEVELOPMENT=true` Worker profile uses local Docker Vespa without mTLS and accepts these trusted local requests without authentication. Keep both services bound to loopback or a private Docker network. The deployed Worker remains protected by Cloudflare Access and independently verifies the signed `Cf-Access-Jwt-Assertion` against Cloudflare's public signing keys, expected issuer, and application audience. Never put a Vespa credential in an agent configuration.
 
 For the hosted API, use browser login once; the CLI registers a public PKCE client dynamically and stores its refresh credentials in the macOS Keychain:
 
@@ -48,7 +47,7 @@ npm run dev:cli -- auth login
 npm run dev:cli -- recall 'where is request authentication enforced' capability:payments
 ```
 
-`GOOD_CONTEXT_URL` defaults to `https://gac.wabz.net`. `GOOD_CONTEXT_TOKEN` remains available for explicitly local development.
+`GOOD_CONTEXT_URL` defaults to `https://gac.wabz.net`; non-loopback URLs use Cloudflare Access.
 
 ### CI and unattended agents
 
@@ -75,7 +74,7 @@ Use the local stdio command in an MCP client configuration:
 }
 ```
 
-Run `good-context auth login` first in a normal terminal. The MCP process reuses the Keychain credential and refreshes opaque Access tokens as needed. For local development, set both `GOOD_CONTEXT_URL=http://127.0.0.1:8787` and the local-only `GOOD_CONTEXT_TOKEN` instead.
+Run `good-context auth login` first in a normal terminal. The MCP process reuses the Keychain credential and refreshes opaque Access tokens as needed. For local development, set `GOOD_CONTEXT_URL=http://127.0.0.1:8787`; no local token is needed.
 
 It exposes `recall`, `remember`, `mark_useful`, `supersede_memory`, `withdraw_memory`, `restore_memory`, and `search_documents`. Withdrawal and restoration are curator-only operations. `remember` returns up to three scoped active-memory duplicate suggestions. Document search results are explicitly non-authoritative references and include the repository source path/revision.
 

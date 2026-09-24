@@ -789,7 +789,7 @@ Reference ingestion enforces a different policy because the content is repositor
 | Reference source spoofing | Sync roots are committed configuration; repository identity, normalized path, revision, and content hash are validated. |
 | Stale or removed specification | Sync manifest withdraws missing documents; indexed revision/time is always returned; superseded results are opt-in. |
 | Stolen Vespa credential | Private key is unavailable to Worker code; Vespa trusts only the dedicated certificate and rotation is centralized. |
-| Access-policy bypass in local mode | Development auth is accepted only by the local build/configuration and loopback listener. |
+| Access-policy bypass in local mode | Local mode deliberately has no authentication, so the Worker and Vespa bind only to loopback or a private Docker network. |
 
 ## 14. Deployment modes
 
@@ -797,8 +797,7 @@ Reference ingestion enforces a different policy because the content is repositor
 
 - Vespa runs in Docker and the API runs with `wrangler dev`/Miniflare.
 - Vespa ports bind to loopback or an internal Docker network.
-- A local command creates a short-lived development JWT signed by a generated local key; production builds do not trust that issuer.
-- `good-context auth login --local` installs the token in the same OS credential-store path used by hosted login.
+- Local Worker clients use no authentication headers and do not attempt Cloudflare Access login.
 - `good-context dev` deploys the Vespa package, waits for convergence, seeds scopes/fixtures, and starts the Worker.
 - `good-context documents sync` can index committed local specification fixtures through the same Worker API.
 - The E5 model is loaded from a pinned URL or packaged file.
