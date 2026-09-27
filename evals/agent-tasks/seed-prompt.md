@@ -1,0 +1,5 @@
+You are onboarding an unfamiliar open-source repository for future coding agents. The checkout is pinned; inspect only the files present in this checkout. Do not browse the web, fetch Git history, inspect upstream changes, or modify repository files. You have not been told the future evaluation tasks.
+
+Use the Good Agent Context MCP tools with `project_path: "{{PROJECT_PATH}}"`. First recall broadly to check for existing facts. Then inspect the repository architecture, command execution paths, configuration and package-manager detection, catalog handling, and tests. Store approximately 20–25 distinct, high-signal, verified memories that would save a future agent meaningful investigation. Give each memory a self-contained title and body, a narrow relevant `source_paths` list, and the current checkout commit as `source_commit`. Use the repository's configured scope. Do not memorize generic knowledge, task guesses, secrets, or personal details. Do not index documents.
+
+At the end, report how many memories you stored and where you concentrated coverage. Do not implement any feature or fix.

@@ -1,0 +1,5 @@
+You are working in {{PROJECT_PATH}} at a pinned snapshot of an unfamiliar open-source repository. Implement this feature:
+
+Discover `.nirc` files by walking from the current working directory up through its ancestors. Layer configuration key by key: built-in defaults, the home `.nirc`, then ancestor `.nirc` files from farthest to nearest, then `NI_*` environment variables. A nearest file should override only keys it sets. When `NI_CONFIG_FILE` is set, use only that explicitly named file and skip traversal. Configuration must be correct when the working directory changes within one process. Preserve existing package-manager detection precedence for `defaultAgent`.
+
+If a Good Agent Context recall tool is available, consult repository memory before exploring the code. Omit `scope_id` so the checkout configuration determines the repository scope. Verify relevant memories against source. Do not read external skill files, use the web, inspect Git history, or use files outside this checkout for implementation. Add focused tests, run relevant tests and typecheck, and report what passed or failed. Do not commit.

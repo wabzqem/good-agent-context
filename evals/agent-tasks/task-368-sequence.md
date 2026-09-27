@@ -1,0 +1,5 @@
+You are continuing work in {{PROJECT_PATH}} after a previous task changed its `.nirc` loading behavior. In a fresh session, implement this follow-on feature:
+
+When `NI_CONFIG_FILE` names a file that does not exist, warn clearly that the configured path is missing. Keep the existing explicit-file semantics: it does not fall back to discovered `.nirc` files. A relative `NI_CONFIG_FILE` path is resolved against the process working directory, not a `-C` target; document this behavior. Ensure the test suite does not generate spurious warnings merely because its global test setup points `NI_CONFIG_FILE` at a nonexistent sentinel. Preserve the previous task's layered discovery and working-directory behavior.
+
+If a Good Agent Context recall tool is available, consult repository memory before exploring the code. Omit `scope_id` so the checkout configuration determines the repository scope. Verify relevant memories against source. Do not read external skill files, use the web, inspect Git history, or use files outside this checkout for implementation. Add focused tests, run relevant tests and typecheck, and report what passed or failed. Do not commit.
