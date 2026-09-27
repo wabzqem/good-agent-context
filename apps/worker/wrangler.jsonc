@@ -16,8 +16,7 @@
     "ACCESS_AUD": "f4574beb9d8b3021c52de9a58a255e40b173444d859057ae21f0b93753d531e1",
     "DEFAULT_ROLE": "contributor",
     "NAMESPACE_ID": "acme",
-    "VESPA_ENDPOINT": "https://dfa08232.e2d984fb.z.vespa-app.cloud/",
-    "REFERENCE_SOURCES_JSON": "[{\"repository_id\":\"repository:good-agent-context\",\"scope_id\":\"capability:good-agent-context\",\"path_prefix\":\"docs\"}]"
+    "VESPA_ENDPOINT": "https://dfa08232.e2d984fb.z.vespa-app.cloud/"
   },
   "mtls_certificates": [
     {
@@ -31,8 +30,7 @@
         "LOCAL_DEVELOPMENT": "true",
         "LOCAL_ROLE": "curator",
         "NAMESPACE_ID": "acme",
-        "VESPA_ENDPOINT": "http://127.0.0.1:8080",
-        "REFERENCE_SOURCES_JSON": "[{\"repository_id\":\"repository:good-agent-context\",\"scope_id\":\"capability:good-agent-context\",\"path_prefix\":\"docs\"}]"
+        "VESPA_ENDPOINT": "http://127.0.0.1:8080"
       }
     }
   }

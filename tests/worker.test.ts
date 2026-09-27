@@ -98,9 +98,9 @@ describe("Good Agent Context Worker", () => {
         { scope_id: "service:fraud", parent_ids: ["capability:payments"] },
       ],
     };
-    const denied = await worker.fetch(request("/v1/scopes/sync", "POST", graph), env);
+    const denied = await worker.fetch(request("/v1/scopes/sync", "POST", graph), { ...env, LOCAL_ROLE: "reader" });
     expect(denied.status).toBe(403);
-    const synced = await worker.fetch(request("/v1/scopes/sync", "POST", graph), { ...env, LOCAL_ROLE: "curator" });
+    const synced = await worker.fetch(request("/v1/scopes/sync", "POST", graph), env);
     expect(synced.status).toBe(201);
     await expect(synced.json()).resolves.toEqual({ synced: ["repository:payments", "organisation:acme", "capability:payments", "service:ledger", "service:fraud"], unbound: [] });
     const response = await worker.fetch(request("/v1/recall", "POST", {
@@ -339,13 +339,36 @@ describe("Good Agent Context Worker", () => {
     });
   });
 
-  it("does not let a client choose arbitrary document-sync roots", async () => {
+  it("syncs documents in a registered repository without a Worker source allowlist", async () => {
     const vespa = fakeVespa({});
     const worker = createWorker({ fetch: vespa.fetch });
     const response = await worker.fetch(request("/v1/documents/sync", "POST", {
-      documents: [{ scope_id: "capability:payments", kind: "specification", title: "Untrusted", chunks: ["text"], chunk_headings: ["Heading"], repository_id: "repository:payments", source_path: "private/spec.md", source_revision: "abc", source_content_hash: "sha256:test" }],
+      documents: [{ scope_id: "capability:payments", kind: "specification", title: "Specification", chunks: ["text"], chunk_headings: ["Heading"], repository_id: "repository:payments", source_path: "private/spec.md", source_revision: "abc", source_content_hash: "sha256:test" }],
     }), env);
-    expect(response.status).toBe(503);
-    await expect(response.json()).resolves.toMatchObject({ error: { code: "reference_sync_not_configured" } });
+    expect(response.status).toBe(201);
+    await expect(response.json()).resolves.toMatchObject({ indexed: [{ source_path: "private/spec.md" }] });
+  });
+
+  it("requires contributor access and repository membership for document sync", async () => {
+    const vespa = fakeVespa({});
+    const worker = createWorker({ fetch: vespa.fetch });
+    const document = { scope_id: "capability:payments", kind: "specification", title: "Specification", chunks: ["text"], chunk_headings: ["Heading"], repository_id: "repository:payments", source_path: "docs/spec.md", source_revision: "abc", source_content_hash: "sha256:test" };
+    const readerResponse = await worker.fetch(request("/v1/documents/sync", "POST", { documents: [document] }), { ...env, LOCAL_ROLE: "reader" });
+    expect(readerResponse.status).toBe(403);
+    const foreignRepositoryResponse = await worker.fetch(request("/v1/documents/sync", "POST", {
+      documents: [{ ...document, repository_id: "repository:other" }],
+    }), env);
+    expect(foreignRepositoryResponse.status).toBe(403);
+    await expect(foreignRepositoryResponse.json()).resolves.toMatchObject({ error: { code: "scope_not_in_repository" } });
+  });
+
+  it("rejects document paths that escape the repository", async () => {
+    const vespa = fakeVespa({});
+    const worker = createWorker({ fetch: vespa.fetch });
+    const response = await worker.fetch(request("/v1/documents/sync", "POST", {
+      documents: [{ scope_id: "capability:payments", kind: "specification", title: "Specification", chunks: ["text"], chunk_headings: ["Heading"], repository_id: "repository:payments", source_path: "../private/spec.md", source_revision: "abc", source_content_hash: "sha256:test" }],
+    }), env);
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({ error: { code: "invalid_source_path" } });
   });
 });

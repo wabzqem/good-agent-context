@@ -34,7 +34,6 @@ export interface Env {
   SERVICE_TOKEN_ROLES_JSON?: string;
   NAMESPACE_ID: string;
   VESPA_ENDPOINT: string;
-  REFERENCE_SOURCES_JSON?: string;
   VESPA_MTLS?: { fetch: FetchLike };
 }
 
@@ -446,42 +445,10 @@ function currentSeconds(now: () => number): number {
   return Math.floor(now() / 1_000);
 }
 
-interface ReferenceSource {
-  repository_id: string;
-  scope_id: string;
-  path_prefix: string;
-}
-
-function permittedReferenceSources(env: Env): ReferenceSource[] {
-  if (!env.REFERENCE_SOURCES_JSON) {
-    throw new RequestProblem(503, "reference_sync_not_configured", "Reference sync is not configured for this namespace.");
-  }
-  try {
-    const parsed: unknown = JSON.parse(env.REFERENCE_SOURCES_JSON);
-    if (!Array.isArray(parsed)) throw new Error("not an array");
-    return parsed.map((source): ReferenceSource => {
-      if (!isRecord(source)) throw new Error("not an object");
-      return {
-        repository_id: requiredString(source.repository_id, "reference repository_id", 256),
-        scope_id: requiredString(source.scope_id, "reference scope_id", 256),
-        path_prefix: requiredString(source.path_prefix, "reference path_prefix", 1_000).replace(/^\.\//, "").replace(/\/$/, ""),
-      };
-    });
-  } catch (caught) {
-    if (caught instanceof RequestProblem) throw caught;
-    throw new RequestProblem(500, "reference_sync_misconfigured", "REFERENCE_SOURCES_JSON must be a JSON array of repository_id, scope_id, and path_prefix objects.");
-  }
-}
-
-function assertPermittedReferenceSource(env: Env, sourcePath: string, repositoryId: string, scopeId: string, sourceUri: unknown, sourceRevision: string): void {
+function validateReferenceSource(env: Env, sourcePath: string, sourceUri: unknown, sourceRevision: string): void {
   if (sourcePath.startsWith("/") || sourcePath.split("/").includes("..")) {
     throw new RequestProblem(400, "invalid_source_path", "source_path must be repository-relative and cannot traverse directories.");
   }
-  const permitted = permittedReferenceSources(env).some((source) =>
-    source.repository_id === repositoryId && source.scope_id === scopeId &&
-    (sourcePath === source.path_prefix || sourcePath.startsWith(`${source.path_prefix}/`)),
-  );
-  if (!permitted) throw new RequestProblem(403, "reference_source_not_allowed", "The repository, scope, or source path is not configured for reference sync.");
   if (typeof sourceUri === "string") {
     let parsed: URL;
     try { parsed = new URL(sourceUri); } catch { throw new RequestProblem(400, "invalid_source_uri", "source_uri must be an absolute HTTPS URL."); }
@@ -643,7 +610,7 @@ async function syncDocuments(fetchImpl: FetchLike, env: Env, now: () => number, 
     const headings = Array.isArray(candidate.chunk_headings) ? candidate.chunk_headings.filter((heading): heading is string => typeof heading === "string") : [];
     const sourceRevision = requiredString(candidate.source_revision, "source_revision", 256);
     const sourceHash = requiredString(candidate.source_content_hash, "source_content_hash", 256);
-    assertPermittedReferenceSource(env, sourcePath, repositoryId, scopeId, candidate.source_uri, sourceRevision);
+    validateReferenceSource(env, sourcePath, candidate.source_uri, sourceRevision);
     const derivedId = await contentHash(`${repositoryId}\n${sourcePath}`);
     const documentId = typeof candidate.document_id === "string" ? candidate.document_id : `ref-${derivedId.slice(7, 31)}`;
     const fields: ReferenceDocument = {
@@ -720,7 +687,7 @@ export function createWorker(overrides: Partial<Dependencies> = {}) {
           return json(await syncDocuments(vespaFetch, env, dependencies.now, await requestJson(request)), 201);
         }
         if (request.method === "POST" && url.pathname === "/v1/scopes/sync") {
-          requireRole(authorization, "curator");
+          requireRole(authorization, "contributor");
           return json(await syncScopes(vespaFetch, env, dependencies.now, parseSyncScopes(await requestJson(request))), 201);
         }
         const memoryMatch = /^\/v1\/memories\/([^/]+)$/.exec(url.pathname);

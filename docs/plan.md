@@ -14,7 +14,7 @@ The system has three layers: CLI and local stdio MCP clients, a Cloudflare Worke
 
 - Each repository owns a `.good-agent-context.yaml` with a stable repository ID, logical scope parent links, path bindings, and optional specification roots.
 - The CLI and MCP adapter resolve the current project's most specific binding. MCP uses per-call `project_path` or a dedicated `GOOD_CONTEXT_PROJECT_ROOT`.
-- A curator runs `scopes sync` to persist the repository scope, parent graph, and repository memberships in Vespa.
+- A contributor runs `scopes sync` to persist the repository scope, parent graph, and repository memberships in Vespa.
 - Recall and document search use the requested scope, its ancestors, and the repository scope. Shared capability scopes can span repositories; repository-scoped memories capture repository-specific facts.
 - The Worker checks active scope membership before scope-addressed operations and unbinds removed scopes on sync.
 

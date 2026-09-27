@@ -30,15 +30,15 @@ npm run dev:cli -- documents search 'how are scopes resolved?'
 
 As agents record findings, `npm run dev:cli -- recall 'how does the Worker reach Vespa?'` retrieves matching memories. `remember`, `useful`, `supersede`, `withdraw`, and `restore` provide the rest of the CLI memory workflow.
 
-The loopback client and local Worker use trusted local requests without Access authentication. For a different repository, run `scopes sync` from that repository after adding its `.good-agent-context.yaml`; configure the Worker's `REFERENCE_SOURCES_JSON` allowlist for that repository before syncing its documents.
+The loopback client and local Worker use trusted local requests without Access authentication. For a different repository, add its `.good-agent-context.yaml` and run `scopes sync` from that repository before storing memories or syncing documents.
 
 ## Repository scopes and documents
 
 A project config declares a stable `repository:` ID, logical scopes with `parents:`, and path bindings. Exactly one `root: .` binding supplies the fallback. It can point to the repository scope when the project has no capability scope. More specific paths select narrower scopes such as a service. See [the example configuration](.good-agent-context.example.yaml).
 
-After changing scope definitions or parent links, run `good-context scopes sync` as a curator. Path-binding changes take effect when the client next reads the config. The Worker stores the repository node and parent links in Vespa. Recall and document search then use the requested scope's ancestor ladder plus the repository scope.
+After changing scope definitions or parent links, run `good-context scopes sync` with a contributor or curator role. Path-binding changes take effect when the client next reads the config. The Worker stores the repository node and parent links in Vespa. Recall and document search then use the requested scope's ancestor ladder plus the repository scope.
 
-To index repository specifications, declare `documents:` in the project config, allow the repository/scope/path prefix in the Worker's `REFERENCE_SOURCES_JSON`, then run:
+To index repository specifications, declare `documents:` in the project config, then run:
 
 ```bash
 npm run dev:cli -- documents sync

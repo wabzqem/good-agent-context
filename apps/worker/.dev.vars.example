@@ -2,4 +2,3 @@ LOCAL_DEVELOPMENT=true
 LOCAL_ROLE=curator
 NAMESPACE_ID=acme
 VESPA_ENDPOINT=http://127.0.0.1:8080
-REFERENCE_SOURCES_JSON=[{"repository_id":"repository:platform-monorepo","scope_id":"capability:payments","path_prefix":"specs"}]
